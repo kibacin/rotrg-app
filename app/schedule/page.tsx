@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "../lib/authFunctions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Calendar, Clock, ChevronLeft, ChevronRight } from "lucide-react";
 import { format, startOfWeek, addDays, addWeeks, subWeeks, isToday, isPast } from "date-fns";
 
 type DaySchedule = {
@@ -21,16 +22,7 @@ export default function SchedulePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Mape za dane na LATINICI
-  const dayNames = [
-    "Ponedeljak",
-    "Utorak",
-    "Sreda",
-    "Četvrtak",
-    "Petak",
-    "Subota",
-    "Nedelja",
-  ];
+  const dayNames = ["Ponedeljak", "Utorak", "Sreda", "Četvrtak", "Petak", "Subota", "Nedelja"];
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -121,84 +113,93 @@ export default function SchedulePage() {
   const goToCurrentWeek = () => setCurrentWeekStart(new Date());
 
   const shiftOptions = [
-    { value: "first", label: "Prva (06-14h)", bg: "bg-blue-100 text-blue-700 hover:bg-blue-200" },
-    { value: "second", label: "Druga (14-22h)", bg: "bg-green-100 text-green-700 hover:bg-green-200" },
-    { value: "third", label: "Treća (22-06h)", bg: "bg-purple-100 text-purple-700 hover:bg-purple-200" },
-    { value: "off", label: "Slobodan", bg: "bg-gray-100 text-gray-700 hover:bg-gray-200" },
+    { value: "first", label: "Prva (06-14h)", bg: "bg-blue-600/20 text-blue-400 hover:bg-blue-600/30" },
+    { value: "second", label: "Druga (14-22h)", bg: "bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30" },
+    { value: "third", label: "Treća (22-06h)", bg: "bg-purple-600/20 text-purple-400 hover:bg-purple-600/30" },
+    { value: "off", label: "Slobodan", bg: "bg-slate-600/20 text-slate-400 hover:bg-slate-600/30" },
   ];
 
   const weekLabel = `${format(currentWeekStart, "dd.MM.")} - ${format(addDays(currentWeekStart, 6), "dd.MM.yyyy.")}`;
 
   if (loading) {
-    return <div className="p-4 text-center">⏳ Učitavanje...</div>;
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] p-4 text-center text-slate-400">
+        <span className="inline-block animate-spin mr-2">⏳</span> Učitavanje rasporeda...
+      </div>
+    );
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="min-h-screen bg-[#0a0a0f] p-4 space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">📅 Raspored</h1>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={goToPreviousWeek}>
-            ◀
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <Calendar className="text-blue-500" size={28} />
+            Raspored
+          </h1>
+          <p className="text-slate-400 text-sm">Izaberite smenu za svaki dan</p>
+        </div>
+        <div className="flex gap-1">
+          <Button variant="outline" size="sm" onClick={goToPreviousWeek} className="border-slate-700 text-slate-400 hover:bg-slate-800">
+            <ChevronLeft size={16} />
           </Button>
-          <Button variant="outline" size="sm" onClick={goToCurrentWeek}>
+          <Button variant="outline" size="sm" onClick={goToCurrentWeek} className="border-slate-700 text-slate-400 hover:bg-slate-800">
             Danas
           </Button>
-          <Button variant="outline" size="sm" onClick={goToNextWeek}>
-            ▶
+          <Button variant="outline" size="sm" onClick={goToNextWeek} className="border-slate-700 text-slate-400 hover:bg-slate-800">
+            <ChevronRight size={16} />
           </Button>
         </div>
       </div>
-      <p className="text-gray-600 text-center font-medium">{weekLabel}</p>
+
+      <p className="text-slate-500 text-center text-sm">{weekLabel}</p>
 
       <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
         {weekDays.map((day, index) => {
           const isPastDay = isPast(day.date) && !isToday(day.date);
           const isTodayDay = isToday(day.date);
-          const dayOfWeek = day.date.getDay(); // 0 = nedelja, 1 = ponedeljak
-          const dayNameIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // prilagođavamo
+          const dayOfWeek = day.date.getDay();
+          const dayNameIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
           const dayName = dayNames[dayNameIndex];
 
           return (
             <Card
               key={day.dateStr}
-              className={`${isPastDay ? "opacity-60" : ""} ${
-                isTodayDay ? "ring-2 ring-blue-500" : ""
-              }`}
+              className={`border-0 bg-[#12121a]/90 backdrop-blur-xl ${
+                isPastDay ? "opacity-50" : ""
+              } ${isTodayDay ? "ring-2 ring-blue-600 shadow-lg shadow-blue-600/20" : ""}`}
             >
               <CardHeader className="py-2 text-center">
-                <CardTitle className="text-sm font-medium">{dayName}</CardTitle>
-                <p
-                  className={`text-xs ${
-                    isTodayDay ? "text-blue-600 font-bold" : "text-gray-500"
-                  }`}
-                >
+                <CardTitle className="text-sm text-white font-medium">{dayName}</CardTitle>
+                <p className={`text-xs ${isTodayDay ? "text-blue-500 font-bold" : "text-slate-500"}`}>
                   {format(day.date, "dd.MM.")}
                 </p>
               </CardHeader>
               <CardContent className="space-y-2">
                 {isPastDay && !day.shift ? (
-                  <p className="text-xs text-gray-400 text-center">Prošlo</p>
+                  <p className="text-xs text-slate-500 text-center">Prošlo</p>
                 ) : (
-                  <>
-                    <div className="grid grid-cols-2 gap-1">
-                      {shiftOptions.map((option) => {
-                        const isSelected = day.shift === option.value;
-                        return (
-                          <Button
-                            key={option.value}
-                            size="sm"
-                            variant="outline"
-                            className={`text-xs p-1 h-auto py-1 ${isSelected ? option.bg : "bg-white"}`}
-                            onClick={() => handleSaveShift(index, option.value as any)}
-                            disabled={isPastDay || saving}
-                          >
-                            {option.label}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  </>
+                  <div className="grid grid-cols-2 gap-1">
+                    {shiftOptions.map((option) => {
+                      const isSelected = day.shift === option.value;
+                      return (
+                        <Button
+                          key={option.value}
+                          size="sm"
+                          variant="outline"
+                          className={`text-xs p-1 h-auto py-1 transition-all ${
+                            isSelected
+                              ? option.bg + " border-transparent"
+                              : "border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white"
+                          }`}
+                          onClick={() => handleSaveShift(index, option.value as any)}
+                          disabled={isPastDay || saving}
+                        >
+                          {option.label.split(" ")[0]}
+                        </Button>
+                      );
+                    })}
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -206,7 +207,7 @@ export default function SchedulePage() {
         })}
       </div>
 
-      <p className="text-xs text-gray-400 text-center">
+      <p className="text-center text-xs text-slate-600 pt-2">
         * Prošli dani su onemogućeni za izmenu
       </p>
     </div>
