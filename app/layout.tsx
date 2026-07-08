@@ -3,7 +3,7 @@
 import { Inter } from "next/font/google";
 import { Home, Car, Calendar, Bell, Settings } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "./lib/supabaseClient";
 import "./globals.css";
@@ -16,65 +16,67 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const checkUser = async () => {
-      console.log("🔍 Proveravam sesiju...");
-
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
-
-      if (sessionError) {
-        console.log("❌ Greška pri dohvatanju sesije:", sessionError);
-        setIsLoggedIn(false);
-        setLoading(false);
-        return;
-      }
-
+    // ⭐ 1. Prvo provjeri trenutnu sesiju ⭐
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      
       if (session?.user) {
-        console.log("✅ Korisnik je prijavljen:", session.user.email);
         setIsLoggedIn(true);
-        setLoading(false);
-
-        const { data, error: roleError } = await supabase
-          .from("drivers")
-          .select("role")
-          .eq("id", session.user.id)
-          .maybeSingle();
-
-        if (roleError) {
-          console.log("❌ Greška pri proveri uloge:", roleError);
-        } else if (data) {
-          console.log("🔑 Uloga:", data.role);
-          setIsAdmin(data.role === "admin");
-        } else {
-          console.log("⚠️ Korisnik nije pronađen u drivers tabeli");
-          const { error: insertError } = await supabase.from("drivers").insert({
-            id: session.user.id,
-            email: session.user.email,
-            full_name: session.user.user_metadata?.full_name || session.user.email,
-            role: "driver",
-          });
-          if (insertError) {
-            console.log("❌ Greška pri dodavanju:", insertError);
-          } else {
-            console.log("✅ Korisnik dodat u drivers tabelu!");
-          }
-        }
+        await fetchUserRole(session.user.id);
       } else {
-        console.log("❌ Nema prijavljenog korisnika");
         setIsLoggedIn(false);
         setLoading(false);
       }
     };
 
-    checkUser();
-  }, []);
+    // ⭐ 2. Funkcija za dohvat uloge ⭐
+    const fetchUserRole = async (userId: string) => {
+      const { data } = await supabase
+        .from("drivers")
+        .select("role")
+        .eq("id", userId)
+        .maybeSingle();
+
+      setIsAdmin(data?.role === "admin");
+      setLoading(false);
+    };
+
+    // ⭐ 3. Slušamo PROMJENE na auth-u (login/logout) ⭐
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+          // Korisnik se upravo ulogovao - ODMAH ažuriramo stanje
+          setIsLoggedIn(true);
+          setLoading(false);
+          await fetchUserRole(session.user.id);
+          // ⭐ Preusmjerimo na home ako smo na login stranici ⭐
+          if (pathname === '/') {
+            router.push('/home');
+          }
+        } else if (event === 'SIGNED_OUT') {
+          // Korisnik se odjavio
+          setIsLoggedIn(false);
+          setIsAdmin(false);
+          setLoading(false);
+          if (pathname !== '/') {
+            router.push('/');
+          }
+        }
+      }
+    );
+
+    checkSession();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [pathname, router]);
 
   // ⭐ DVA RAZLIČITA MENIJA ⭐
   let navItems = [];
@@ -97,7 +99,8 @@ export default function RootLayout({
 
   const isLoginPage = pathname === "/";
 
-  if (loading && !isLoggedIn && !isLoginPage) {
+  // ⭐ LOADING: SAMO na login stranici i dok se učitava ⭐
+  if (loading && isLoginPage) {
     return (
       <html lang="sr" className={inter.className}>
         <body className="bg-[#0a0a0f]">
