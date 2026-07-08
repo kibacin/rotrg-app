@@ -16,20 +16,12 @@ type Car = {
   year: number;
 };
 
-type CarPhoto = {
-  id: number;
-  car_id: number;
-  photo_url: string;
-  uploaded_at: string;
-};
-
 export default function CarsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [cars, setCars] = useState<Car[]>([]);
   const [selectedCar, setSelectedCar] = useState<number | null>(null);
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
-  const [existingPhotos, setExistingPhotos] = useState<CarPhoto[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
 
@@ -61,30 +53,6 @@ export default function CarsPage() {
     fetchCars();
   }, []);
 
-  useEffect(() => {
-    const fetchPhotos = async () => {
-      if (!selectedCar || !userId) {
-        setExistingPhotos([]);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("car_photos")
-        .select("*")
-        .eq("car_id", selectedCar)
-        .eq("driver_id", userId);
-
-      if (error) {
-        console.error("❌ Greška:", error);
-        setExistingPhotos([]);
-      } else {
-        setExistingPhotos(data || []);
-      }
-    };
-
-    fetchPhotos();
-  }, [selectedCar, userId]);
-
   const handleCarSelect = (carId: number) => {
     setSelectedCar(carId);
     setPhotos([]);
@@ -102,7 +70,7 @@ export default function CarsPage() {
   };
 
   const handleSavePhotos = async () => {
-    if (!selectedCar || !userId || photos.length < 6) return;
+    if (!selectedCar || !userId || photos.length === 0) return;
 
     setUploading(true);
     try {
@@ -141,14 +109,6 @@ export default function CarsPage() {
       
       setPhotos([]);
       setPhotoPreviews([]);
-      
-      const { data } = await supabase
-        .from("car_photos")
-        .select("*")
-        .eq("car_id", selectedCar)
-        .eq("driver_id", userId);
-      
-      setExistingPhotos(data || []);
 
     } catch (error: any) {
       alert(`❌ Greška: ${error.message}`);
@@ -217,28 +177,15 @@ export default function CarsPage() {
               <Camera size={20} className="text-blue-500" />
               Dodaj slike
             </CardTitle>
-            <p className="text-slate-400 text-sm">Poslikajte auto sa 6-8 strana</p>
+            <p className="text-slate-400 text-sm">Poslikajte auto</p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {existingPhotos.length > 0 && (
-              <div>
-                <Label className="text-slate-300 text-sm">Već postavljene slike</Label>
-                <div className="grid grid-cols-3 gap-2 mt-2">
-                  {existingPhotos.map((photo) => (
-                    <img
-                      key={photo.id}
-                      src={photo.photo_url}
-                      alt="Auto"
-                      className="w-full h-24 object-cover rounded-lg border border-slate-700"
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* ⭐ VOZAČ NE VIDI VEĆ POSTAVLJENE SLIKE ⭐ */}
+            {/* OVAJ DIO JE UKLONJEN ZA VOZAČE */}
 
             <div>
               <Label htmlFor="photos" className="text-slate-300 text-sm">
-                Izaberite slike (6-8)
+                Izaberite slike (max 8)
               </Label>
               <Input
                 id="photos"
@@ -278,19 +225,19 @@ export default function CarsPage() {
             <Button 
               className="w-full bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-lg shadow-blue-600/20"
               onClick={handleSavePhotos}
-              disabled={photos.length < 6 || uploading}
+              disabled={photos.length === 0 || uploading}
             >
               {uploading ? (
                 <span className="flex items-center gap-2">
                   <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   Slanje slika...
                 </span>
-              ) : photos.length < 6 ? (
-                `Potrebno je još ${6 - photos.length} slika`
+              ) : photos.length === 0 ? (
+                `Izaberite slike (max 8)`
               ) : (
                 <span className="flex items-center gap-2">
                   <Upload size={18} />
-                  Sačuvaj slike
+                  Sačuvaj {photos.length} slika
                 </span>
               )}
             </Button>

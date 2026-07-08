@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "../lib/authFunctions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,25 +17,50 @@ type DaySchedule = {
 };
 
 export default function SchedulePage() {
+  const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
   const [weekDays, setWeekDays] = useState<DaySchedule[]>([]);
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(new Date());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const dayNames = ["Ponedeljak", "Utorak", "Sreda", "Četvrtak", "Petak", "Subota", "Nedelja"];
 
+  // ⭐ PROVERA DA LI JE ADMIN ⭐
   useEffect(() => {
-    const fetchUser = async () => {
+    const checkAccess = async () => {
       const { user } = await getCurrentUser();
-      if (user) setUserId(user.id);
+      if (!user) {
+        router.push("/");
+        return;
+      }
+
+      setUserId(user.id);
+
+      const { data } = await supabase
+        .from("drivers")
+        .select("role")
+        .eq("id", user.id)
+        .single();
+
+      // ⭐ AKO JE ADMIN, PREUSMERI GA NA ADMIN RASPORED ⭐
+      if (data?.role === "admin") {
+        router.push("/schedule/admin");
+        return;
+      }
+
+      setIsAdmin(false);
+      setLoading(false);
     };
-    fetchUser();
+
+    checkAccess();
   }, []);
 
+  // ⭐ UČITAVANJE RASPOREDA (samo za vozače) ⭐
   useEffect(() => {
     const fetchWeekSchedule = async () => {
-      if (!userId) return;
+      if (!userId || isAdmin) return;
       setLoading(true);
 
       const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
@@ -75,7 +101,7 @@ export default function SchedulePage() {
     };
 
     fetchWeekSchedule();
-  }, [userId, currentWeekStart]);
+  }, [userId, currentWeekStart, isAdmin]);
 
   const handleSaveShift = async (index: number, shift: "first" | "second" | "third" | "off") => {
     if (!userId) return;

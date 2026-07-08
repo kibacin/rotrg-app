@@ -22,7 +22,6 @@ export default function RootLayout({
 
   useEffect(() => {
     const checkUser = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 300));
       console.log("🔍 Proveravam sesiju...");
 
       const {
@@ -40,6 +39,7 @@ export default function RootLayout({
       if (session?.user) {
         console.log("✅ Korisnik je prijavljen:", session.user.email);
         setIsLoggedIn(true);
+        setLoading(false);
 
         const { data, error: roleError } = await supabase
           .from("drivers")
@@ -69,33 +69,52 @@ export default function RootLayout({
       } else {
         console.log("❌ Nema prijavljenog korisnika");
         setIsLoggedIn(false);
+        setLoading(false);
       }
-
-      setLoading(false);
     };
 
     checkUser();
   }, []);
 
-  const navItems = [
-    { name: "Početna", href: "/home", icon: Home },
-    { name: "Automobili", href: "/cars", icon: Car },
-    { name: "Raspored", href: "/schedule", icon: Calendar },
-    { name: "Obaveštenja", href: "/notifications", icon: Bell },
-  ];
+  // ⭐ DVA RAZLIČITA MENIJA ⭐
+  let navItems = [];
 
   if (isAdmin) {
-    navItems.push({ name: "Admin", href: "/admin", icon: Settings });
+    navItems = [
+      { name: "Početna", href: "/home", icon: Home },
+      { name: "Automobili", href: "/cars", icon: Car },
+      { name: "Obaveštenja", href: "/notifications", icon: Bell },
+      { name: "Admin Panel", href: "/admin", icon: Settings },
+    ];
+  } else {
+    navItems = [
+      { name: "Početna", href: "/home", icon: Home },
+      { name: "Automobili", href: "/cars", icon: Car },
+      { name: "Raspored", href: "/schedule", icon: Calendar },
+      { name: "Obaveštenja", href: "/notifications", icon: Bell },
+    ];
   }
 
   const isLoginPage = pathname === "/";
+
+  if (loading && !isLoggedIn && !isLoginPage) {
+    return (
+      <html lang="sr" className={inter.className}>
+        <body className="bg-[#0a0a0f]">
+          <div className="min-h-screen flex items-center justify-center">
+            <div className="text-slate-400 text-lg">⏳ Učitavanje...</div>
+          </div>
+        </body>
+      </html>
+    );
+  }
 
   return (
     <html lang="sr" className={inter.className}>
       <body className="bg-[#0a0a0f]">
         <main className={isLoginPage ? "pb-0" : "pb-20"}>{children}</main>
 
-        {isLoggedIn && !isLoginPage && !loading && (
+        {isLoggedIn && !isLoginPage && (
           <nav className="fixed bottom-0 left-0 right-0 bg-[#12121a]/90 backdrop-blur-xl border-t border-slate-800 shadow-2xl shadow-black/50 z-50">
             <div className="flex justify-around items-center h-16">
               {navItems.map((item) => {
