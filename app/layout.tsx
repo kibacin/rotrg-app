@@ -16,16 +16,14 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-
-
   const pathname = usePathname();
   const router = useRouter();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // ⭐ 1. Provjera sesije i dohvat uloge ⭐
   useEffect(() => {
-    // ⭐ 1. Prvo provjeri trenutnu sesiju ⭐
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       
@@ -38,7 +36,6 @@ export default function RootLayout({
       }
     };
 
-    // ⭐ 2. Funkcija za dohvat uloge ⭐
     const fetchUserRole = async (userId: string) => {
       const { data } = await supabase
         .from("drivers")
@@ -50,20 +47,16 @@ export default function RootLayout({
       setLoading(false);
     };
 
-    // ⭐ 3. Slušamo PROMJENE na auth-u (login/logout) ⭐
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_IN' && session?.user) {
-          // Korisnik se upravo ulogovao - ODMAH ažuriramo stanje
           setIsLoggedIn(true);
           setLoading(false);
           await fetchUserRole(session.user.id);
-          // ⭐ Preusmjerimo na home ako smo na login stranici ⭐
           if (pathname === '/') {
             router.push('/home');
           }
         } else if (event === 'SIGNED_OUT') {
-          // Korisnik se odjavio
           setIsLoggedIn(false);
           setIsAdmin(false);
           setLoading(false);
@@ -80,6 +73,70 @@ export default function RootLayout({
       subscription.unsubscribe();
     };
   }, [pathname, router]);
+
+  // ⭐ 2. AUTOMATSKA PRETPLATA NA NOTIFIKACIJE ⭐
+  useEffect(() => {
+    const autoSubscribe = async () => {
+      if (!isLoggedIn) return;
+
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        try {
+          // Provjeri da li je već pretplaćen
+          const registration = await navigator.serviceWorker.getRegistration();
+          if (!registration) return;
+
+          const existingSubscription = await registration.pushManager.getSubscription();
+          if (existingSubscription) {
+            console.log('✅ Već pretplaćen');
+            return;
+          }
+
+          // Traži dozvolu za notifikacije
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') {
+            console.log('❌ Notifikacije odbijene od strane korisnika');
+            return;
+          }
+
+          const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+          if (!publicKey) {
+            console.log('❌ VAPID ključ nedostaje');
+            return;
+          }
+
+          const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: publicKey,
+          });
+
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session?.access_token) {
+            console.log('❌ Nema sesije');
+            return;
+          }
+
+          const response = await fetch('/api/subscribe', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify(subscription),
+          });
+
+          if (response.ok) {
+            console.log('✅ Notifikacije automatski uključene');
+          } else {
+            console.log('❌ Greška pri čuvanju pretplate');
+          }
+        } catch (error) {
+          console.log('❌ Greška pri automatskoj pretplati:', error);
+        }
+      }
+    };
+
+    autoSubscribe();
+  }, [isLoggedIn]);
 
   // ⭐ DVA RAZLIČITA MENIJA ⭐
   let navItems = [];
@@ -102,7 +159,6 @@ export default function RootLayout({
 
   const isLoginPage = pathname === "/";
 
-  // ⭐ LOADING: SAMO na login stranici i dok se učitava ⭐
   if (loading && isLoginPage) {
     return (
       <html lang="sr" className={inter.className}>

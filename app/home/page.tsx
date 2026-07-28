@@ -8,7 +8,7 @@ import { supabase } from "../lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Car, Calendar, Bell, Settings, LogOut, Users } from "lucide-react";
-import NotificationButton from '@/components/NotificationButton';
+
 export default function HomePage() {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
@@ -175,7 +175,7 @@ export default function HomePage() {
               </CardContent>
             </Card>
           </div>
-          <NotificationButton />
+          
           <Button
             onClick={handleLogout}
             variant="outline"
@@ -253,7 +253,7 @@ export default function HomePage() {
             </CardContent>
           </Card>
         </div>
-      <NotificationButton />
+      
         <Button
           onClick={handleLogout}
           variant="outline"
