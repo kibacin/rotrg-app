@@ -18,7 +18,9 @@ export async function saveSubscription(userId: string, subscription: PushSubscri
     .upsert({
       user_id: userId,
       endpoint: subscription.endpoint,
+      // @ts-ignore
       p256dh: subscription.keys?.p256dh || '',
+      // @ts-ignore
       auth: subscription.keys?.auth || '',
     }, {
       onConflict: 'user_id, endpoint'
