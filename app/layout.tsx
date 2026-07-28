@@ -74,17 +74,58 @@ export default function RootLayout({
     };
   }, [pathname, router]);
 
-  // ⭐ 2. AUTOMATSKA PRETPLATA NA NOTIFIKACIJE ⭐
+  // ⭐ 2. AUTOMATSKA PRETPLATA NA NOTIFIKACIJE (SA ČEKANJEM NA SW) ⭐
   useEffect(() => {
+    const waitForSW = async () => {
+      if (!isLoggedIn) return null;
+      
+      if ('serviceWorker' in navigator) {
+        try {
+          const registration = await navigator.serviceWorker.getRegistration();
+          if (registration) {
+            if (registration.active) {
+              console.log('✅ SW već aktivan');
+              return registration;
+            } else {
+              console.log('⏳ Čekam da SW postane aktivan...');
+              await new Promise((resolve) => {
+                const checkActive = () => {
+                  if (registration.active) {
+                    console.log('✅ SW je aktivan!');
+                    resolve(null);
+                  } else {
+                    setTimeout(checkActive, 500);
+                  }
+                };
+                checkActive();
+              });
+              return registration;
+            }
+          } else {
+            console.log('❌ Nema SW registracije');
+            return null;
+          }
+        } catch (error) {
+          console.log('❌ Greška pri čekanju SW:', error);
+          return null;
+        }
+      }
+      return null;
+    };
+
     const autoSubscribe = async () => {
       if (!isLoggedIn) return;
 
       if ('serviceWorker' in navigator && 'PushManager' in window) {
         try {
-          // Provjeri da li je već pretplaćen
-          const registration = await navigator.serviceWorker.getRegistration();
-          if (!registration) return;
+          // ⭐ Prvo sačekaj SW ⭐
+          const registration = await waitForSW();
+          if (!registration) {
+            console.log('❌ SW nije dostupan');
+            return;
+          }
 
+          // Provjeri da li je već pretplaćen
           const existingSubscription = await registration.pushManager.getSubscription();
           if (existingSubscription) {
             console.log('✅ Već pretplaćen');
