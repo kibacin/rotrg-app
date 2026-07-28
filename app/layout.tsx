@@ -22,7 +22,6 @@ export default function RootLayout({
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // ⭐ 1. Provjera sesije i dohvat uloge ⭐
   useEffect(() => {
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -74,7 +73,7 @@ export default function RootLayout({
     };
   }, [pathname, router]);
 
-  // ⭐ 2. AUTOMATSKA PRETPLATA NA NOTIFIKACIJE (SA ČEKANJEM NA SW) ⭐
+  // ⭐ AUTOMATSKA PRETPLATA SA ČEKANJEM NA SW ⭐
   useEffect(() => {
     const waitForSW = async () => {
       if (!isLoggedIn) return null;
@@ -118,24 +117,21 @@ export default function RootLayout({
 
       if ('serviceWorker' in navigator && 'PushManager' in window) {
         try {
-          // ⭐ Prvo sačekaj SW ⭐
           const registration = await waitForSW();
           if (!registration) {
             console.log('❌ SW nije dostupan');
             return;
           }
 
-          // Provjeri da li je već pretplaćen
           const existingSubscription = await registration.pushManager.getSubscription();
           if (existingSubscription) {
             console.log('✅ Već pretplaćen');
             return;
           }
 
-          // Traži dozvolu za notifikacije
           const permission = await Notification.requestPermission();
           if (permission !== 'granted') {
-            console.log('❌ Notifikacije odbijene od strane korisnika');
+            console.log('❌ Notifikacije odbijene');
             return;
           }
 
@@ -179,7 +175,7 @@ export default function RootLayout({
     autoSubscribe();
   }, [isLoggedIn]);
 
-  // ⭐ DVA RAZLIČITA MENIJA ⭐
+  // ⭐ MENI ⭐
   let navItems = [];
 
   if (isAdmin) {
