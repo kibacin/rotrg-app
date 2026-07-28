@@ -117,7 +117,8 @@ export default function NotificationButton() {
       setLoading(false);
     }
   };
-
+const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+console.log('🔑 VAPID public key:', publicKey);
   return (
     <Button
       onClick={isSubscribed ? unsubscribe : subscribe}

@@ -175,7 +175,7 @@ export default function HomePage() {
               </CardContent>
             </Card>
           </div>
-
+          <NotificationButton />
           <Button
             onClick={handleLogout}
             variant="outline"
@@ -184,7 +184,7 @@ export default function HomePage() {
             <LogOut size={18} className="mr-2" />
             Odjavi se
           </Button>
-          <NotificationButton />
+          
           <p className="text-center text-xs text-slate-600 pt-4">
             ROTRG Taxi Admin © {new Date().getFullYear()}
           </p>
@@ -253,7 +253,7 @@ export default function HomePage() {
             </CardContent>
           </Card>
         </div>
-
+      <NotificationButton />
         <Button
           onClick={handleLogout}
           variant="outline"
