@@ -11,6 +11,4 @@ module.exports = withPWA({
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === "development",
-  appleMobileWebAppCapable: true,
-  appleMobileWebAppStatusBarStyle: "black-translucent",
 })(nextConfig);
