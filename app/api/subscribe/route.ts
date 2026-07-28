@@ -4,10 +4,21 @@ import { saveSubscription } from '@/app/lib/push';
 
 export async function POST(request: NextRequest) {
   try {
-    // Dohvati korisnika iz sesije
-    const { data: { session } } = await supabase.auth.getSession();
+    // ⭐ Dohvati token iz header-a ⭐
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader) {
+      return NextResponse.json(
+        { error: 'Niste prijavljeni' },
+        { status: 401 }
+      );
+    }
+
+    const token = authHeader.replace('Bearer ', '');
     
-    if (!session?.user) {
+    // ⭐ Postavi session sa tokenom ⭐
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    
+    if (error || !user) {
       return NextResponse.json(
         { error: 'Niste prijavljeni' },
         { status: 401 }
@@ -15,8 +26,7 @@ export async function POST(request: NextRequest) {
     }
 
     const subscription = await request.json();
-    
-    await saveSubscription(session.user.id, subscription);
+    await saveSubscription(user.id, subscription);
     
     return NextResponse.json({ success: true });
   } catch (error) {

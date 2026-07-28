@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Bell, BellOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getCurrentUser } from '@/app/lib/authFunctions';
+import { supabase } from '@/app/lib/supabaseClient';
 
 export default function NotificationButton() {
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -59,6 +60,8 @@ export default function NotificationButton() {
       }
 
       const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      console.log('🔑 VAPID public key:', publicKey);
+      
       if (!publicKey) {
         alert('VAPID public key nije podešen');
         setLoading(false);
@@ -70,24 +73,34 @@ export default function NotificationButton() {
         applicationServerKey: publicKey,
       });
 
-      // Pošalji pretplatu na server
+      // ⭐ Dohvati session token za autentifikaciju ⭐
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        alert('Niste prijavljeni!');
+        setLoading(false);
+        return;
+      }
+
+      // ⭐ Pošalji pretplatu sa tokenom u header-u ⭐
       const response = await fetch('/api/subscribe', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify(subscription),
       });
 
       if (!response.ok) {
-        throw new Error('Greška pri čuvanju pretplate');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Greška pri čuvanju pretplate');
       }
 
       setIsSubscribed(true);
       alert('✅ Notifikacije su omogućene!');
-    } catch (error) {
-      console.error('Greška pri pretplati:', error);
-      alert('❌ Greška pri omogućavanju notifikacija');
+    } catch (error: any) {
+      console.error('❌ Greška pri pretplati:', error);
+      alert('❌ Greška pri omogućavanju notifikacija: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -102,10 +115,16 @@ export default function NotificationButton() {
         if (subscription) {
           await subscription.unsubscribe();
           
-          // Obriši pretplatu iz baze
-          await fetch('/api/subscribe', {
-            method: 'DELETE',
-          });
+          // Dohvati token za brisanje
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.access_token) {
+            await fetch('/api/subscribe', {
+              method: 'DELETE',
+              headers: {
+                'Authorization': `Bearer ${session.access_token}`,
+              },
+            });
+          }
         }
       }
       setIsSubscribed(false);
@@ -117,8 +136,7 @@ export default function NotificationButton() {
       setLoading(false);
     }
   };
-const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-console.log('🔑 VAPID public key:', publicKey);
+
   return (
     <Button
       onClick={isSubscribed ? unsubscribe : subscribe}
