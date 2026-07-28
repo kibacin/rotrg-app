@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/app/lib/supabaseClient';
-import { saveSubscription } from '@/app/lib/push';
+
 
 export async function POST(request: NextRequest) {
   try {
-    // ⭐ Dohvati token iz header-a ⭐
+    // 1. Dohvati token iz header-a
     const authHeader = request.headers.get('Authorization');
     if (!authHeader) {
       return NextResponse.json(
@@ -15,24 +15,47 @@ export async function POST(request: NextRequest) {
 
     const token = authHeader.replace('Bearer ', '');
     
-    // ⭐ Postavi session sa tokenom ⭐
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    // 2. Dohvati korisnika preko tokena
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
     
-    if (error || !user) {
+    if (userError || !user) {
+      console.error('❌ Greška pri dohvatanju korisnika:', userError);
       return NextResponse.json(
         { error: 'Niste prijavljeni' },
         { status: 401 }
       );
     }
 
+    // 3. Dohvati subscription podatke
     const subscription = await request.json();
-    await saveSubscription(user.id, subscription);
-    
+    console.log('📝 Subscription:', subscription);
+
+    // 4. Sačuvaj u bazu
+    const { error: insertError } = await supabase
+      .from('push_subscriptions')
+      .upsert({
+        user_id: user.id,
+        endpoint: subscription.endpoint,
+        p256dh: subscription.keys?.p256dh || '',
+        auth: subscription.keys?.auth || '',
+      }, {
+        onConflict: 'user_id, endpoint'
+      });
+
+    if (insertError) {
+      console.error('❌ Greška pri čuvanju u bazu:', insertError);
+      return NextResponse.json(
+        { error: 'Greška pri čuvanju pretplate: ' + insertError.message },
+        { status: 500 }
+      );
+    }
+
+    console.log('✅ Pretplata sačuvana za korisnika:', user.email);
     return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Greška pri pretplati:', error);
+  } catch (error: any) {
+    console.error('❌ Greška pri pretplati:', error);
     return NextResponse.json(
-      { error: 'Greška pri pretplati' },
+      { error: 'Greška pri pretplati: ' + error.message },
       { status: 500 }
     );
   }
