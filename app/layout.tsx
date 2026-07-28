@@ -4,6 +4,7 @@ import { Inter } from "next/font/google";
 import { Home, Car, Calendar, Bell, Settings } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import SWRegister from './sw-register';
 import { useEffect, useState } from "react";
 import { supabase } from "./lib/supabaseClient";
 import "./globals.css";
@@ -15,6 +16,8 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+
+
   const pathname = usePathname();
   const router = useRouter();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -115,6 +118,7 @@ export default function RootLayout({
   return (
     <html lang="sr" className={inter.className}>
       <body className="bg-[#0a0a0f]">
+        <SWRegister />
         <main className={isLoginPage ? "pb-0" : "pb-20"}>{children}</main>
 
         {isLoggedIn && !isLoginPage && (

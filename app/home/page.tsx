@@ -8,7 +8,7 @@ import { supabase } from "../lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Car, Calendar, Bell, Settings, LogOut, Users } from "lucide-react";
-
+import NotificationButton from '@/components/NotificationButton';
 export default function HomePage() {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
@@ -184,7 +184,7 @@ export default function HomePage() {
             <LogOut size={18} className="mr-2" />
             Odjavi se
           </Button>
-
+          <NotificationButton />
           <p className="text-center text-xs text-slate-600 pt-4">
             ROTRG Taxi Admin © {new Date().getFullYear()}
           </p>

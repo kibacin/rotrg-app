@@ -76,6 +76,7 @@ export default function NotificationsPage() {
 
     setSaving(true);
     try {
+      // 1. Dodaj obaveštenje u bazu
       const { error } = await supabase.from("announcements").insert({
         admin_id: userId,
         title,
@@ -84,6 +85,7 @@ export default function NotificationsPage() {
 
       if (error) throw error;
 
+      // 2. Osveži listu obaveštenja
       const { data } = await supabase
         .from("announcements")
         .select(`
@@ -96,10 +98,32 @@ export default function NotificationsPage() {
       
       setTitle("");
       setContent("");
-      alert("✅ Obaveštenje je dodato!");
+
+    // 3. Pošalji notifikacije preko API rute
+try {
+  const response = await fetch('/api/send-notification', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 
+      title, 
+      body: content, 
+      url: '/notifications' 
+    }),
+  });
+
+  if (response.ok) {
+    const data = await response.json();
+    alert(`✅ Obaveštenje je dodato i poslato!`);
+  } else {
+    alert('✅ Obaveštenje je dodato, ali notifikacije nisu poslate');
+  }
+} catch (notifError) {
+  console.error('Greška pri slanju notifikacija:', notifError);
+  alert('✅ Obaveštenje je dodato, ali notifikacije nisu poslate (greška)');
+}
 
     } catch (error: any) {
-      alert("Greška: " + error.message);
+      alert("❌ Greška: " + error.message);
     } finally {
       setSaving(false);
     }
@@ -118,7 +142,7 @@ export default function NotificationsPage() {
 
       setAnnouncements(announcements.filter(a => a.id !== id));
     } catch (error: any) {
-      alert("Greška: " + error.message);
+      alert("❌ Greška: " + error.message);
     }
   };
 
