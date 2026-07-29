@@ -11,20 +11,22 @@ export const supabase = createBrowserClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storageKey: 'rotrg-auth',
-      // ⭐ OVO JE KLJUČNO ZA iOS PWA ⭐
+      flowType: 'pkce',
       storage: {
         getItem: (key) => {
           if (typeof window === 'undefined') return null;
-          return localStorage.getItem(key);
+          // ⭐ PRVO ČITAJ IZ COOKIE ⭐
+          const cookie = document.cookie.split('; ').find(row => row.startsWith(key + '='));
+          return cookie ? decodeURIComponent(cookie.split('=')[1]) : null;
         },
         setItem: (key, value) => {
           if (typeof window === 'undefined') return;
-          localStorage.setItem(key, value);
+          // ⭐ ČUVAJ U COOKIE (ne u localStorage) ⭐
+          document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=604800; Secure; SameSite=Lax`;
         },
         removeItem: (key) => {
           if (typeof window === 'undefined') return;
-          localStorage.removeItem(key);
+          document.cookie = `${key}=; path=/; max-age=0; Secure; SameSite=Lax`;
         },
       },
     },

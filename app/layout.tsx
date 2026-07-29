@@ -26,6 +26,8 @@ export default function RootLayout({
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       
+      console.log('🔍 Sesija:', session?.user?.email || 'Nema sesije');
+
       if (session?.user) {
         setIsLoggedIn(true);
         await fetchUserRole(session.user.id);
