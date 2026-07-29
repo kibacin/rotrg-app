@@ -24,17 +24,21 @@ export default function RootLayout({
 
   useEffect(() => {
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error } = await supabase.auth.getSession();
       
+      console.log('🔍 Session error:', error);
       console.log('🔍 Sesija:', session?.user?.email || 'Nema sesije');
 
       if (session?.user) {
         setIsLoggedIn(true);
         await fetchUserRole(session.user.id);
       } else {
+        const { data: { session: refreshedSession } } = await supabase.auth.refreshSession();
+        if (refreshedSession?.user) {
         setIsLoggedIn(false);
         setLoading(false);
       }
+    }
     };
 
     const fetchUserRole = async (userId: string) => {
