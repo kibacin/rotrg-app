@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
 
     if (roleError || driver?.role !== 'admin') {
       return NextResponse.json(
-        { error: 'Samo admin može slati notifikacije' },
+        { error: 'Only an administrator can send notifications' },
         { status: 403 }
       );
     }
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
       !body.trim()
     ) {
       return NextResponse.json(
-        { error: 'Naslov i sadržaj su obavezni' },
+        { error: 'Title and content are required' },
         { status: 400 }
       );
     }
@@ -44,9 +44,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, result });
   } catch (error) {
-    console.error('Greška pri slanju notifikacija:', error);
+    console.error('Notification delivery failed:', error);
     return NextResponse.json(
-      { error: 'Greška pri slanju notifikacija' },
+      { error: 'Notification delivery failed' },
       { status: 500 }
     );
   }

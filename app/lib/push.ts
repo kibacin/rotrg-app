@@ -8,7 +8,7 @@ function configureWebPush() {
   const privateKey = process.env.VAPID_PRIVATE_KEY;
 
   if (!publicKey || !privateKey) {
-    throw new Error('Nedostaju VAPID ključevi');
+    throw new Error('VAPID keys are missing');
   }
 
   webpush.setVapidDetails(
@@ -59,7 +59,7 @@ export async function sendNotificationToAll(title: string, body: string, url?: s
             .delete()
             .eq('endpoint', sub.endpoint);
         }
-        console.error('Greška pri slanju push notifikacije:', error);
+        console.error('Push notification delivery failed:', error);
         return false;
       }
     })

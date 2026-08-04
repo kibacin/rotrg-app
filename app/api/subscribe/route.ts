@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
       typeof auth !== 'string'
     ) {
       return NextResponse.json(
-        { error: 'Neispravna push pretplata' },
+        { error: 'Invalid push subscription' },
         { status: 400 }
       );
     }
@@ -50,18 +50,18 @@ export async function POST(request: NextRequest) {
       });
 
     if (insertError) {
-      console.error('❌ Greška pri čuvanju u bazu:', insertError);
+      console.error('Could not save the subscription:', insertError);
       return NextResponse.json(
-        { error: 'Greška pri čuvanju pretplate: ' + insertError.message },
+        { error: 'Could not save the subscription: ' + insertError.message },
         { status: 500 }
       );
     }
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    console.error('❌ Greška pri pretplati:', error);
+    console.error('Notification subscription failed:', error);
     return NextResponse.json(
-      { error: 'Greška pri čuvanju push pretplate' },
+      { error: 'Could not save the push subscription' },
       { status: 500 }
     );
   }

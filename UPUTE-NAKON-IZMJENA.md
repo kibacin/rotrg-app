@@ -40,7 +40,21 @@ npm run build
 
 Ako build prođe, uradi commit i push. Vercel će automatski napraviti deployment.
 
-## 3. Ponovo instaliraj PWA na telefonu
+## 3. Omogući nove vrijednosti smjena u Supabaseu
+
+U novoj verziji smjene su `7:00`, `15:30`, `Whole day` i `Other`. Vrijednost za
+`Other` se čuva zajedno sa početnim i završnim vremenom u postojećoj koloni
+`work_schedule.shift_type`, tako da nije potrebna nova tabela ili kolona.
+
+Ako je `shift_type` već obični `text` bez starog CHECK ograničenja, ovaj korak
+možeš preskočiti. Ako Supabase pri čuvanju nove smjene prijavi grešku, otvori:
+
+`Supabase → SQL Editor → New query`
+
+Zatim kopiraj i pokreni sadržaj fajla `SUPABASE-SHIFT-MIGRATION.sql`. Skripta
+zadržava postojeće rasporede i dozvoljava nove vrijednosti.
+
+## 4. Ponovo instaliraj PWA na telefonu
 
 Zbog promjene načina čuvanja sesije i starog service workera:
 
@@ -48,12 +62,12 @@ Zbog promjene načina čuvanja sesije i starog service workera:
 2. otvori novu Vercel verziju aplikacije;
 3. ponovo je dodaj na Home Screen;
 4. prijavi se jednom unutar instalirane aplikacije;
-5. na početnoj stranici pritisni **Uključi** kod obavijesti;
+5. na početnoj stranici pritisni **Enable** kod obavijesti;
 6. potvrdi sistemsku dozvolu za obavijesti.
 
 Nakon toga zatvori aplikaciju i ponovo je otvori. Korisnik treba ostati prijavljen.
 
-## 4. Test notifikacije
+## 5. Test notifikacije
 
 1. Prijavi se kao vozač i uključi obavijesti.
 2. U Supabase tabeli `push_subscriptions` provjeri da se pojavio novi red.

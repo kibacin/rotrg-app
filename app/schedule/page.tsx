@@ -1,42 +1,64 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { addDays, addWeeks, format, isPast, isToday, startOfWeek, subWeeks } from "date-fns";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock3, X } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "../lib/authFunctions";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  encodeCustomShift,
+  getShiftLabel,
+  getShiftTone,
+  parseCustomShift,
+  SHIFT_CHOICES,
+  type ShiftChoice,
+} from "../lib/schedule";
+import { AppPage, LoadingScreen, PageHeader } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
-import { Calendar, Clock, ChevronLeft, ChevronRight } from "lucide-react";
-import { format, startOfWeek, addDays, addWeeks, subWeeks, isToday, isPast } from "date-fns";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 type DaySchedule = {
   date: Date;
   dateStr: string;
-  shift: 'first' | 'second' | 'third' | 'off' | null;
+  shift: string | null;
   id: number | null;
 };
+
+type ScheduleRow = {
+  id: number;
+  work_date: string;
+  shift_type: string | null;
+};
+
+type CustomEditor = {
+  index: number;
+  start: string;
+  end: string;
+};
+
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export default function SchedulePage() {
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
   const [weekDays, setWeekDays] = useState<DaySchedule[]>([]);
-  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(new Date());
+  const [currentWeekStart, setCurrentWeekStart] = useState(new Date());
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [savingIndex, setSavingIndex] = useState<number | null>(null);
+  const [customEditor, setCustomEditor] = useState<CustomEditor | null>(null);
 
-  const dayNames = ["Ponedeljak", "Utorak", "Sreda", "Četvrtak", "Petak", "Subota", "Nedelja"];
-
-  // ⭐ PROVERA DA LI JE ADMIN ⭐
   useEffect(() => {
+    let active = true;
+
     const checkAccess = async () => {
       const { user } = await getCurrentUser();
       if (!user) {
-        router.push("/");
+        router.replace("/");
         return;
       }
-
-      setUserId(user.id);
 
       const { data } = await supabase
         .from("drivers")
@@ -44,71 +66,79 @@ export default function SchedulePage() {
         .eq("id", user.id)
         .single();
 
-      // ⭐ AKO JE ADMIN, PREUSMERI GA NA ADMIN RASPORED ⭐
+      if (!active) return;
       if (data?.role === "admin") {
-        router.push("/schedule/admin");
+        router.replace("/scheduleall");
         return;
       }
 
-      setIsAdmin(false);
-      setLoading(false);
+      setUserId(user.id);
     };
 
-    checkAccess();
-  }, []);
+    void checkAccess();
+    return () => {
+      active = false;
+    };
+  }, [router]);
 
-  // ⭐ UČITAVANJE RASPOREDA (samo za vozače) ⭐
   useEffect(() => {
-    const fetchWeekSchedule = async () => {
-      if (!userId || isAdmin) return;
-      setLoading(true);
+    if (!userId) return;
+    let active = true;
 
+    const fetchWeekSchedule = async () => {
+      setLoading(true);
       const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
       const end = addDays(start, 6);
-
-      const days: DaySchedule[] = [];
-      for (let i = 0; i < 7; i++) {
-        const date = addDays(start, i);
-        days.push({
+      const days: DaySchedule[] = Array.from({ length: 7 }, (_, index) => {
+        const date = addDays(start, index);
+        return {
           date,
           dateStr: format(date, "yyyy-MM-dd"),
           shift: null,
           id: null,
-        });
-      }
+        };
+      });
 
       const { data, error } = await supabase
         .from("work_schedule")
-        .select("*")
+        .select("id, work_date, shift_type")
         .eq("driver_id", userId)
         .gte("work_date", format(start, "yyyy-MM-dd"))
         .lte("work_date", format(end, "yyyy-MM-dd"));
 
       if (error) {
-        console.error("Greška:", error);
-      } else if (data) {
-        data.forEach((item: any) => {
-          const dayIndex = days.findIndex((d) => d.dateStr === item.work_date);
-          if (dayIndex !== -1) {
-            days[dayIndex].shift = item.shift_type;
-            days[dayIndex].id = item.id;
+        console.error("Could not load the schedule:", error);
+      } else {
+        for (const item of (data ?? []) as ScheduleRow[]) {
+          const day = days.find((entry) => entry.dateStr === item.work_date);
+          if (day) {
+            day.shift = item.shift_type;
+            day.id = item.id;
           }
-        });
+        }
       }
 
-      setWeekDays(days);
-      setLoading(false);
+      if (active) {
+        setWeekDays(days);
+        setLoading(false);
+      }
     };
 
-    fetchWeekSchedule();
-  }, [userId, currentWeekStart, isAdmin]);
+    void fetchWeekSchedule();
+    return () => {
+      active = false;
+    };
+  }, [currentWeekStart, userId]);
 
-  const handleSaveShift = async (index: number, shift: "first" | "second" | "third" | "off") => {
+  const saveShift = async (index: number, shift: string) => {
     if (!userId) return;
     const day = weekDays[index];
-    setSaving(true);
+    if (!day) return;
 
+    setSavingIndex(index);
     try {
+      let savedId = day.id;
+
       if (day.id) {
         const { error } = await supabase
           .from("work_schedule")
@@ -116,113 +146,162 @@ export default function SchedulePage() {
           .eq("id", day.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("work_schedule").insert({
-          driver_id: userId,
-          work_date: day.dateStr,
-          shift_type: shift,
-        });
+        const { data, error } = await supabase
+          .from("work_schedule")
+          .insert({ driver_id: userId, work_date: day.dateStr, shift_type: shift })
+          .select("id")
+          .single();
         if (error) throw error;
+        savedId = data.id;
       }
 
-      const updatedDays = [...weekDays];
-      updatedDays[index].shift = shift;
-      setWeekDays(updatedDays);
-    } catch (error: any) {
-      alert("Greška: " + error.message);
+      setWeekDays((current) =>
+        current.map((entry, entryIndex) =>
+          entryIndex === index ? { ...entry, shift, id: savedId } : entry
+        )
+      );
+      setCustomEditor(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The shift could not be saved";
+      alert(`Error: ${message}`);
     } finally {
-      setSaving(false);
+      setSavingIndex(null);
     }
   };
 
-  const goToPreviousWeek = () => setCurrentWeekStart((prev) => subWeeks(prev, 1));
-  const goToNextWeek = () => setCurrentWeekStart((prev) => addWeeks(prev, 1));
-  const goToCurrentWeek = () => setCurrentWeekStart(new Date());
+  const selectShift = (index: number, choice: ShiftChoice) => {
+    if (choice !== "other") {
+      void saveShift(index, choice);
+      return;
+    }
 
-  const shiftOptions = [
-    { value: "first", label: "Prva (06-14h)", bg: "bg-blue-600/20 text-blue-400 hover:bg-blue-600/30" },
-    { value: "second", label: "Druga (14-22h)", bg: "bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30" },
-    { value: "third", label: "Treća (22-06h)", bg: "bg-purple-600/20 text-purple-400 hover:bg-purple-600/30" },
-    { value: "off", label: "Slobodan", bg: "bg-slate-600/20 text-slate-400 hover:bg-slate-600/30" },
-  ];
+    const existing = parseCustomShift(weekDays[index]?.shift);
+    setCustomEditor({
+      index,
+      start: existing?.start ?? "09:00",
+      end: existing?.end ?? "17:00",
+    });
+  };
 
-  const weekLabel = `${format(currentWeekStart, "dd.MM.")} - ${format(addDays(currentWeekStart, 6), "dd.MM.yyyy.")}`;
+  const saveCustomShift = () => {
+    if (!customEditor) return;
+    if (!customEditor.start || !customEditor.end || customEditor.start === customEditor.end) {
+      alert("Choose two different start and end times.");
+      return;
+    }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0f] p-4 text-center text-slate-400">
-        <span className="inline-block animate-spin mr-2">⏳</span> Učitavanje rasporeda...
-      </div>
-    );
-  }
+    void saveShift(customEditor.index, encodeCustomShift(customEditor.start, customEditor.end));
+  };
+
+  const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
+  const weekLabel = `${format(start, "MMM d")} – ${format(addDays(start, 6), "MMM d, yyyy")}`;
+
+  if (loading) return <LoadingScreen label="Loading your schedule..." />;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] p-4 space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Calendar className="text-blue-500" size={28} />
-            Raspored
-          </h1>
-          <p className="text-slate-400 text-sm">Izaberite smenu za svaki dan</p>
-        </div>
-        <div className="flex gap-1">
-          <Button variant="outline" size="sm" onClick={goToPreviousWeek} className="border-slate-700 text-slate-400 hover:bg-slate-800">
-            <ChevronLeft size={16} />
-          </Button>
-          <Button variant="outline" size="sm" onClick={goToCurrentWeek} className="border-slate-700 text-slate-400 hover:bg-slate-800">
-            Danas
-          </Button>
-          <Button variant="outline" size="sm" onClick={goToNextWeek} className="border-slate-700 text-slate-400 hover:bg-slate-800">
-            <ChevronRight size={16} />
-          </Button>
-        </div>
+    <AppPage>
+      <PageHeader
+        eyebrow="Availability"
+        title="My schedule"
+        description="Choose when you can work for each day."
+        icon={CalendarDays}
+        actions={
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => setCurrentWeekStart((date) => subWeeks(date, 1))}
+              aria-label="Previous week"
+              className="rounded-xl border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-white"
+            >
+              <ChevronLeft />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCurrentWeekStart(new Date())}
+              className="h-8 rounded-xl border-white/10 bg-white/[0.03] px-3 text-xs text-slate-300 hover:bg-white/[0.06] hover:text-white"
+            >
+              Today
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => setCurrentWeekStart((date) => addWeeks(date, 1))}
+              aria-label="Next week"
+              className="rounded-xl border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/[0.06] hover:text-white"
+            >
+              <ChevronRight />
+            </Button>
+          </div>
+        }
+      />
+
+      <div className="flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3">
+        <p className="text-sm font-medium text-slate-300">{weekLabel}</p>
+        <span className="text-[11px] uppercase tracking-[0.16em] text-slate-600">7 days</span>
       </div>
 
-      <p className="text-slate-500 text-center text-sm">{weekLabel}</p>
-
-      <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+      <div className="grid gap-3 lg:grid-cols-2">
         {weekDays.map((day, index) => {
           const isPastDay = isPast(day.date) && !isToday(day.date);
           const isTodayDay = isToday(day.date);
-          const dayOfWeek = day.date.getDay();
-          const dayNameIndex = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-          const dayName = dayNames[dayNameIndex];
+          const selectedLabel = getShiftLabel(day.shift);
 
           return (
             <Card
               key={day.dateStr}
-              className={`border-0 bg-[#12121a]/90 backdrop-blur-xl ${
-                isPastDay ? "opacity-50" : ""
-              } ${isTodayDay ? "ring-2 ring-blue-600 shadow-lg shadow-blue-600/20" : ""}`}
+              className={`border py-0 transition ${
+                isTodayDay
+                  ? "border-cyan-300/25 bg-cyan-300/[0.055] shadow-[0_16px_45px_rgba(34,211,238,0.07)]"
+                  : "border-white/8 bg-white/[0.03]"
+              } ${isPastDay ? "opacity-50" : ""}`}
             >
-              <CardHeader className="py-2 text-center">
-                <CardTitle className="text-sm text-white font-medium">{dayName}</CardTitle>
-                <p className={`text-xs ${isTodayDay ? "text-blue-500 font-bold" : "text-slate-500"}`}>
-                  {format(day.date, "dd.MM.")}
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {isPastDay && !day.shift ? (
-                  <p className="text-xs text-slate-500 text-center">Prošlo</p>
+              <CardContent className="p-4 sm:p-5">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-white">{DAY_NAMES[index]}</p>
+                      {isTodayDay && (
+                        <span className="rounded-full bg-cyan-300/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-300">
+                          Today
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">{format(day.date, "EEEE, MMMM d")}</p>
+                  </div>
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${getShiftTone(day.shift)}`}>
+                    {savingIndex === index ? "Saving..." : selectedLabel}
+                  </span>
+                </div>
+
+                {isPastDay ? (
+                  <p className="rounded-xl border border-white/5 bg-black/10 px-3 py-2 text-center text-xs text-slate-600">
+                    Past days cannot be edited.
+                  </p>
                 ) : (
-                  <div className="grid grid-cols-2 gap-1">
-                    {shiftOptions.map((option) => {
-                      const isSelected = day.shift === option.value;
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {SHIFT_CHOICES.map((choice) => {
+                      const isCustom = day.shift?.startsWith("other|") && choice.value === "other";
+                      const selected = day.shift === choice.value || isCustom;
+
                       return (
-                        <Button
-                          key={option.value}
-                          size="sm"
-                          variant="outline"
-                          className={`text-xs p-1 h-auto py-1 transition-all ${
-                            isSelected
-                              ? option.bg + " border-transparent"
-                              : "border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white"
+                        <button
+                          key={choice.value}
+                          type="button"
+                          disabled={savingIndex !== null}
+                          onClick={() => selectShift(index, choice.value)}
+                          className={`rounded-xl border px-3 py-2.5 text-left transition disabled:cursor-wait disabled:opacity-50 ${
+                            selected
+                              ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-200"
+                              : "border-white/8 bg-black/10 text-slate-400 hover:border-white/15 hover:bg-white/[0.04] hover:text-white"
                           }`}
-                          onClick={() => handleSaveShift(index, option.value as any)}
-                          disabled={isPastDay || saving}
                         >
-                          {option.label.split(" ")[0]}
-                        </Button>
+                          <span className="block text-xs font-semibold">{choice.label}</span>
+                          <span className="mt-0.5 block text-[10px] text-slate-600">{choice.description}</span>
+                        </button>
                       );
                     })}
                   </div>
@@ -233,9 +312,73 @@ export default function SchedulePage() {
         })}
       </div>
 
-      <p className="text-center text-xs text-slate-600 pt-2">
-        * Prošli dani su onemogućeni za izmenu
-      </p>
-    </div>
+      {customEditor && (
+        <div
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-3 backdrop-blur-sm sm:items-center"
+          onClick={() => setCustomEditor(null)}
+        >
+          <Card
+            className="w-full max-w-md border border-white/10 bg-[#0d1521] py-0 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <CardContent className="p-5 sm:p-6">
+              <div className="mb-5 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-amber-300/10 text-amber-300">
+                    <Clock3 size={20} />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-white">Custom working hours</p>
+                    <p className="text-xs text-slate-500">{DAY_NAMES[customEditor.index]}</p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCustomEditor(null)}
+                  aria-label="Close"
+                  className="rounded-xl text-slate-500 hover:bg-white/5 hover:text-white"
+                >
+                  <X />
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="custom-start" className="text-xs text-slate-400">From</Label>
+                  <Input
+                    id="custom-start"
+                    type="time"
+                    value={customEditor.start}
+                    onChange={(event) => setCustomEditor((current) => current ? { ...current, start: event.target.value } : current)}
+                    className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white focus-visible:border-cyan-300/30 focus-visible:ring-cyan-300/10"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="custom-end" className="text-xs text-slate-400">To</Label>
+                  <Input
+                    id="custom-end"
+                    type="time"
+                    value={customEditor.end}
+                    onChange={(event) => setCustomEditor((current) => current ? { ...current, end: event.target.value } : current)}
+                    className="h-11 rounded-xl border-white/10 bg-white/[0.04] text-white focus-visible:border-cyan-300/30 focus-visible:ring-cyan-300/10"
+                  />
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                onClick={saveCustomShift}
+                disabled={savingIndex !== null}
+                className="mt-5 h-11 w-full rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 font-semibold text-slate-950 hover:from-cyan-300 hover:to-blue-400"
+              >
+                {savingIndex !== null ? "Saving..." : "Save custom hours"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </AppPage>
   );
 }

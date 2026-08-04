@@ -4,13 +4,13 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "ROTRG Taxi",
     short_name: "ROTRG",
-    description: "Aplikacija za vozače ROTRG Taxi",
+    description: "Fleet workspace for ROTRG Taxi drivers",
     id: "/",
     start_url: "/",
     scope: "/",
     display: "standalone",
-    background_color: "#0a0a0f",
-    theme_color: "#0a0a0f",
+    background_color: "#070b12",
+    theme_color: "#070b12",
     orientation: "portrait",
     icons: [
       {

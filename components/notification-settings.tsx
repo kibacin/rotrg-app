@@ -35,7 +35,7 @@ async function saveSubscription(subscription: PushSubscription) {
   } = await supabase.auth.getSession();
 
   if (!session?.access_token) {
-    throw new Error("Nema aktivne sesije");
+    throw new Error("No active session");
   }
 
   const response = await fetch("/api/subscribe", {
@@ -49,13 +49,13 @@ async function saveSubscription(subscription: PushSubscription) {
 
   if (!response.ok) {
     const result = await response.json().catch(() => null);
-    throw new Error(result?.error || "Pretplata nije sačuvana");
+    throw new Error(result?.error || "The notification subscription could not be saved");
   }
 }
 
 export function NotificationSettings() {
   const [status, setStatus] = useState<NotificationStatus>("checking");
-  const [message, setMessage] = useState("Provjeravam obavijesti...");
+  const [message, setMessage] = useState("Checking notification status...");
   const [working, setWorking] = useState(false);
 
   useEffect(() => {
@@ -69,7 +69,7 @@ export function NotificationSettings() {
       ) {
         if (active) {
           setStatus("unsupported");
-          setMessage("Ovaj uređaj ne podržava web obavijesti.");
+          setMessage("This device does not support web notifications.");
         }
         return;
       }
@@ -77,7 +77,7 @@ export function NotificationSettings() {
       if (Notification.permission === "denied") {
         if (active) {
           setStatus("denied");
-          setMessage("Obavijesti su blokirane u postavkama telefona.");
+          setMessage("Notifications are blocked in your phone settings.");
         }
         return;
       }
@@ -88,23 +88,23 @@ export function NotificationSettings() {
       if (!subscription) {
         if (active) {
           setStatus("disabled");
-          setMessage("Uključite obavijesti da ne propustite poruke admina.");
+          setMessage("Enable notifications so you do not miss admin updates.");
         }
         return;
       }
 
       if (active) {
         setStatus("enabled");
-        setMessage("Obavijesti su uključene na ovom uređaju.");
+        setMessage("Notifications are active on this device.");
       }
 
       try {
         await saveSubscription(subscription);
       } catch (error) {
-        console.error("Greška pri sinhronizaciji pretplate:", error);
+        console.error("Notification subscription sync failed:", error);
         if (active) {
           setStatus("error");
-          setMessage("Telefon je pretplaćen, ali server nije sačuvao pretplatu.");
+          setMessage("The phone is subscribed, but the server could not sync it.");
         }
       }
     };
@@ -118,7 +118,7 @@ export function NotificationSettings() {
 
   const enableNotifications = async () => {
     setWorking(true);
-    setMessage("Uključujem obavijesti...");
+    setMessage("Enabling notifications...");
 
     try {
       if (
@@ -127,7 +127,7 @@ export function NotificationSettings() {
         !("Notification" in window)
       ) {
         setStatus("unsupported");
-        setMessage("Ovaj uređaj ne podržava web obavijesti.");
+        setMessage("This device does not support web notifications.");
         return;
       }
 
@@ -136,15 +136,15 @@ export function NotificationSettings() {
         setStatus(permission === "denied" ? "denied" : "disabled");
         setMessage(
           permission === "denied"
-            ? "Obavijesti su blokirane u postavkama telefona."
-            : "Dozvola za obavijesti nije odobrena."
+            ? "Notifications are blocked in your phone settings."
+            : "Notification permission was not granted."
         );
         return;
       }
 
       const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
       if (!publicKey) {
-        throw new Error("Nedostaje javni VAPID ključ");
+        throw new Error("The public VAPID key is missing");
       }
 
       const registration = await navigator.serviceWorker.ready;
@@ -159,14 +159,14 @@ export function NotificationSettings() {
 
       await saveSubscription(subscription);
       setStatus("enabled");
-      setMessage("Obavijesti su uključene na ovom uređaju.");
+      setMessage("Notifications are active on this device.");
     } catch (error) {
-      console.error("Greška pri uključivanju obavijesti:", error);
+      console.error("Could not enable notifications:", error);
       setStatus("error");
       setMessage(
         error instanceof Error
           ? error.message
-          : "Obavijesti se trenutno ne mogu uključiti."
+          : "Notifications cannot be enabled right now."
       );
     } finally {
       setWorking(false);
@@ -177,22 +177,22 @@ export function NotificationSettings() {
   const blocked = status === "denied" || status === "unsupported";
 
   return (
-    <Card className="border-0 bg-[#12121a]/90 backdrop-blur-xl">
-      <CardContent className="py-4">
+    <Card className="border border-white/8 bg-white/[0.035] py-0">
+      <CardContent className="p-4 sm:p-5">
         <div className="flex items-center gap-3">
           <div
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
               enabled
-                ? "bg-emerald-600/20 text-emerald-400"
-                : "bg-purple-600/20 text-purple-400"
+                ? "border border-emerald-300/15 bg-emerald-300/10 text-emerald-300"
+                : "border border-violet-300/15 bg-violet-300/10 text-violet-300"
             }`}
           >
             {enabled ? <CheckCircle2 size={22} /> : blocked ? <BellOff size={22} /> : <Bell size={22} />}
           </div>
 
           <div className="min-w-0 flex-1">
-            <p className="font-medium text-white">Obavijesti na telefonu</p>
-            <p className="text-xs text-slate-400">{message}</p>
+            <p className="font-medium text-white">Phone notifications</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{message}</p>
           </div>
 
           {!enabled && !blocked && (
@@ -201,9 +201,9 @@ export function NotificationSettings() {
               size="sm"
               onClick={enableNotifications}
               disabled={working || status === "checking"}
-              className="shrink-0 bg-purple-600 text-white hover:bg-purple-700"
+              className="h-9 shrink-0 rounded-xl bg-violet-400 px-3 font-semibold text-slate-950 hover:bg-violet-300"
             >
-              {working ? "Čekaj..." : "Uključi"}
+              {working ? "Wait..." : "Enable"}
             </Button>
           )}
         </div>

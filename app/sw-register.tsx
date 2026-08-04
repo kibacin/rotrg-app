@@ -14,7 +14,7 @@ export default function SWRegister() {
           console.log('✅ Service Worker registrovan:', registration);
         })
         .catch((error) => {
-          console.log('❌ Greška pri registraciji:', error);
+          console.log('Service worker registration failed:', error);
         });
     }
   }, []);

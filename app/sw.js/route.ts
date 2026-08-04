@@ -25,13 +25,13 @@ self.addEventListener('push', (event) => {
     payload = event.data ? event.data.json() : {};
   } catch {
     payload = {
-      body: event.data ? event.data.text() : 'Imate novo obaveštenje',
+      body: event.data ? event.data.text() : 'You have a new announcement',
     };
   }
 
   const title = payload.title || 'ROTRG Taxi';
   const options = {
-    body: payload.body || 'Imate novo obaveštenje',
+    body: payload.body || 'You have a new announcement',
     icon: payload.icon || '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     tag: payload.tag || 'rotrg-' + Date.now(),

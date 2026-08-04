@@ -21,7 +21,7 @@ export async function authenticateRequest(request: Request) {
   } = await supabaseAdmin.auth.getUser(token);
 
   if (error || !user) {
-    return { user: null, error: 'Sesija nije važeća' };
+    return { user: null, error: 'The session is not valid' };
   }
 
   return { user, error: null };

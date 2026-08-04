@@ -1,7 +1,7 @@
 "use client";
 
 import { Inter } from "next/font/google";
-import { Home, Car, Calendar, Bell, Settings } from "lucide-react";
+import { Home, Car, CalendarDays, Bell, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import SWRegister from './sw-register';
@@ -83,22 +83,21 @@ export default function RootLayout({
     };
   }, [pathname, router]);
 
-  // ⭐ MENI ⭐
-  let navItems = [];
+  let navItems;
 
   if (isAdmin) {
     navItems = [
-      { name: "Početna", href: "/home", icon: Home },
-      { name: "Automobili", href: "/cars", icon: Car },
-      { name: "Obaveštenja", href: "/notifications", icon: Bell },
-      { name: "Admin Panel", href: "/admin", icon: Settings },
+      { name: "Home", href: "/home", icon: Home },
+      { name: "Vehicles", href: "/cars", icon: Car },
+      { name: "Alerts", href: "/notifications", icon: Bell },
+      { name: "Admin", href: "/admin", icon: LayoutDashboard },
     ];
   } else {
     navItems = [
-      { name: "Početna", href: "/home", icon: Home },
-      { name: "Automobili", href: "/cars", icon: Car },
-      { name: "Raspored", href: "/schedule", icon: Calendar },
-      { name: "Obaveštenja", href: "/notifications", icon: Bell },
+      { name: "Home", href: "/home", icon: Home },
+      { name: "Vehicles", href: "/cars", icon: Car },
+      { name: "Schedule", href: "/schedule", icon: CalendarDays },
+      { name: "Alerts", href: "/notifications", icon: Bell },
     ];
   }
 
@@ -109,10 +108,13 @@ export default function RootLayout({
 
   if (loading || isRedirecting) {
     return (
-      <html lang="sr" className={inter.className}>
-        <body className="bg-[#0a0a0f]">
+      <html lang="en" className={inter.className}>
+        <body>
           <div className="min-h-screen flex items-center justify-center">
-            <div className="text-slate-400 text-lg">⏳ Učitavanje...</div>
+            <div className="flex items-center gap-3 text-sm text-slate-400">
+              <span className="size-5 animate-spin rounded-full border-2 border-cyan-300/20 border-t-cyan-300" />
+              Loading...
+            </div>
           </div>
         </body>
       </html>
@@ -120,14 +122,14 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="sr" className={inter.className}>
-      <body className="bg-[#0a0a0f]">
+    <html lang="en" className={inter.className}>
+      <body>
         <SWRegister />
-        <main className={isLoginPage ? "pb-0" : "pb-20"}>{children}</main>
+        <main className={isLoginPage ? "pb-0" : "pb-24"}>{children}</main>
 
         {isLoggedIn && !isLoginPage && (
-          <nav className="fixed bottom-0 left-0 right-0 bg-[#12121a]/90 backdrop-blur-xl border-t border-slate-800 shadow-2xl shadow-black/50 z-50">
-            <div className="flex justify-around items-center h-16">
+          <nav className="fixed inset-x-0 bottom-0 z-50 px-3 pb-[max(0.7rem,env(safe-area-inset-bottom))] pt-2">
+            <div className="mx-auto flex h-16 max-w-xl items-center justify-around rounded-2xl border border-white/10 bg-[#0d1521]/90 px-1 shadow-[0_18px_60px_rgba(0,0,0,0.55)] backdrop-blur-2xl">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive =
@@ -137,17 +139,14 @@ export default function RootLayout({
                   <Link
                     key={item.name}
                     href={item.href}
-                    className={`flex flex-col items-center gap-0.5 text-xs transition-all duration-200 relative ${
+                    className={`relative flex min-w-16 flex-col items-center gap-0.5 rounded-xl px-2 py-2 text-[10px] transition-all duration-200 ${
                       isActive 
-                        ? "text-blue-500" 
-                        : "text-slate-500 hover:text-slate-300"
+                        ? "bg-cyan-300/10 text-cyan-300" 
+                        : "text-slate-500 hover:bg-white/5 hover:text-slate-300"
                     }`}
                   >
-                    <Icon size={22} strokeWidth={isActive ? 2.5 : 1.5} />
+                    <Icon size={20} strokeWidth={isActive ? 2.25 : 1.6} />
                     <span className={isActive ? "font-medium" : ""}>{item.name}</span>
-                    {isActive && (
-                      <span className="absolute -top-0.5 w-6 h-0.5 bg-blue-500 rounded-full" />
-                    )}
                   </Link>
                 );
               })}

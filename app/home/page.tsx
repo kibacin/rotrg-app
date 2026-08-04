@@ -2,276 +2,253 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { signOut } from "../lib/authFunctions";
-import { getCurrentUser } from "../lib/authFunctions";
+import {
+  Bell,
+  CalendarDays,
+  Camera,
+  CarFront,
+  ChevronRight,
+  LayoutDashboard,
+  LogOut,
+  Users,
+} from "lucide-react";
+import { signOut, getCurrentUser } from "../lib/authFunctions";
 import { supabase } from "../lib/supabaseClient";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { NotificationSettings } from "@/components/notification-settings";
-import { Car, Calendar, Bell, Settings, LogOut, Users } from "lucide-react";
+import { AppPage, LoadingScreen } from "@/components/app-shell";
+
+type DashboardStats = {
+  drivers: number;
+  vehicles: number;
+  photos: number;
+};
+
+type ActionCardProps = {
+  title: string;
+  description: string;
+  icon: typeof CarFront;
+  tone: string;
+  onClick: () => void;
+};
+
+function ActionCard({ title, description, icon: Icon, tone, onClick }: ActionCardProps) {
+  return (
+    <button type="button" onClick={onClick} className="group text-left">
+      <Card className="h-full border border-white/8 bg-white/[0.035] py-0 transition duration-200 hover:-translate-y-0.5 hover:border-cyan-300/20 hover:bg-white/[0.055]">
+        <CardContent className="flex h-full flex-col p-4 sm:p-5">
+          <div className="mb-5 flex items-start justify-between">
+            <div className={`flex size-11 items-center justify-center rounded-2xl border ${tone}`}>
+              <Icon size={21} strokeWidth={1.8} />
+            </div>
+            <ChevronRight size={18} className="mt-1 text-slate-700 transition group-hover:translate-x-0.5 group-hover:text-cyan-300" />
+          </div>
+          <p className="font-semibold text-white">{title}</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">{description}</p>
+        </CardContent>
+      </Card>
+    </button>
+  );
+}
+
+function StatCard({ label, value, icon: Icon }: { label: string; value: number; icon: typeof Users }) {
+  return (
+    <Card className="border border-white/8 bg-white/[0.035] py-0">
+      <CardContent className="p-4">
+        <div className="mb-3 flex items-center justify-between text-slate-500">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.14em]">{label}</span>
+          <Icon size={16} />
+        </div>
+        <p className="text-2xl font-semibold tracking-tight text-white">{value}</p>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function HomePage() {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [displayName, setDisplayName] = useState("Driver");
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ drivers: 0, photos: 0, schedules: 0 });
+  const [stats, setStats] = useState<DashboardStats>({ drivers: 0, vehicles: 0, photos: 0 });
 
   useEffect(() => {
+    let active = true;
+
     const checkUser = async () => {
       const { user } = await getCurrentUser();
       if (!user) {
-        router.push("/");
+        router.replace("/");
         return;
       }
 
       const { data } = await supabase
         .from("drivers")
-        .select("role")
+        .select("role, full_name")
         .eq("id", user.id)
         .single();
 
-      setIsAdmin(data?.role === "admin");
+      if (!active) return;
 
-      if (data?.role === "admin") {
-        const { count: driversCount } = await supabase
-          .from("drivers")
-          .select("*", { count: "exact", head: true });
-        
-        const { count: photosCount } = await supabase
-          .from("car_photos")
-          .select("*", { count: "exact", head: true });
-        
-        const { count: schedulesCount } = await supabase
-          .from("work_schedule")
-          .select("*", { count: "exact", head: true });
+      const admin = data?.role === "admin";
+      setIsAdmin(admin);
+      setDisplayName(data?.full_name || user.email?.split("@")[0] || "Driver");
 
+      if (admin) {
+        const [driversResult, vehiclesResult, photosResult] = await Promise.all([
+          supabase.from("drivers").select("id", { count: "exact", head: true }).neq("role", "admin"),
+          supabase.from("cars").select("id", { count: "exact", head: true }),
+          supabase.from("car_photos").select("id", { count: "exact", head: true }),
+        ]);
+
+        if (!active) return;
         setStats({
-          drivers: driversCount || 0,
-          photos: photosCount || 0,
-          schedules: schedulesCount || 0,
+          drivers: driversResult.count ?? 0,
+          vehicles: vehiclesResult.count ?? 0,
+          photos: photosResult.count ?? 0,
         });
       }
 
       setLoading(false);
     };
 
-    checkUser();
+    void checkUser();
+    return () => {
+      active = false;
+    };
   }, [router]);
 
   const handleLogout = async () => {
     await signOut();
-    router.push("/");
+    router.replace("/");
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
-        <div className="text-slate-400">⏳ Učitavanje...</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingScreen label="Preparing your workspace..." />;
 
-  // ⭐ ADMIN HOMEPAGE ⭐ (NEMA RASPORED KARTICU)
-  if (isAdmin) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0f]">
-        <div className="p-4 space-y-6">
-          <div className="flex justify-between items-center pt-4">
-            <div>
-              <h1 className="text-2xl font-bold text-white">🚕 ROTRG Admin</h1>
-              <p className="text-sm text-slate-400">Upravljanje sistemom</p>
-            </div>
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-lg shadow-blue-600/20">
-              <span className="text-white font-bold text-sm">A</span>
-            </div>
-          </div>
+  const actions = isAdmin
+    ? [
+        {
+          title: "Admin dashboard",
+          description: "Drivers, weekly schedules and photo history",
+          icon: LayoutDashboard,
+          tone: "border-cyan-300/15 bg-cyan-300/10 text-cyan-300",
+          href: "/admin",
+        },
+        {
+          title: "Vehicles",
+          description: "Open the fleet and upload vehicle photos",
+          icon: CarFront,
+          tone: "border-emerald-300/15 bg-emerald-300/10 text-emerald-300",
+          href: "/cars",
+        },
+        {
+          title: "Announcements",
+          description: "Publish messages and send phone notifications",
+          icon: Bell,
+          tone: "border-violet-300/15 bg-violet-300/10 text-violet-300",
+          href: "/notifications",
+        },
+        {
+          title: "Driver schedule",
+          description: "Review every driver in a compact weekly view",
+          icon: CalendarDays,
+          tone: "border-amber-300/15 bg-amber-300/10 text-amber-300",
+          href: "/scheduleall",
+        },
+      ]
+    : [
+        {
+          title: "Vehicles",
+          description: "Choose a vehicle and upload your photo report",
+          icon: CarFront,
+          tone: "border-cyan-300/15 bg-cyan-300/10 text-cyan-300",
+          href: "/cars",
+        },
+        {
+          title: "My schedule",
+          description: "Set your availability for the selected week",
+          icon: CalendarDays,
+          tone: "border-emerald-300/15 bg-emerald-300/10 text-emerald-300",
+          href: "/schedule",
+        },
+        {
+          title: "Announcements",
+          description: "Read important updates from your administrator",
+          icon: Bell,
+          tone: "border-violet-300/15 bg-violet-300/10 text-violet-300",
+          href: "/notifications",
+        },
+      ];
 
-          {/* Statistika */}
-          <div className="grid grid-cols-3 gap-3">
-            <Card className="border-0 bg-[#12121a]/90 backdrop-blur-xl">
-              <CardHeader className="py-3">
-                <CardTitle className="text-sm text-slate-400">👤 Vozači</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold text-white">{stats.drivers}</p>
-              </CardContent>
-            </Card>
-            <Card className="border-0 bg-[#12121a]/90 backdrop-blur-xl">
-              <CardHeader className="py-3">
-                <CardTitle className="text-sm text-slate-400">📸 Slike</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold text-white">{stats.photos}</p>
-              </CardContent>
-            </Card>
-            <Card className="border-0 bg-[#12121a]/90 backdrop-blur-xl">
-              <CardHeader className="py-3">
-                <CardTitle className="text-sm text-slate-400">📅 Rasporedi</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold text-white">{stats.schedules}</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* ⭐ ADMIN KARTICE (NEMA RASPORED) ⭐ */}
-          <div className="grid grid-cols-2 gap-4">
-            <Card
-              className="cursor-pointer border-0 bg-[#12121a]/90 backdrop-blur-xl hover:bg-[#1a1a28]/90 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-xl"
-              onClick={() => router.push("/admin")}
-            >
-              <CardHeader className="pb-2">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-lg shadow-blue-600/20">
-                  <Settings size={22} className="text-white" />
-                </div>
-                <CardTitle className="text-sm text-white mt-2">Admin panel</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-slate-400">Upravljaj sistemom</p>
-              </CardContent>
-            </Card>
-
-            <Card
-              className="cursor-pointer border-0 bg-[#12121a]/90 backdrop-blur-xl hover:bg-[#1a1a28]/90 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-xl"
-              onClick={() => router.push("/cars")}
-            >
-              <CardHeader className="pb-2">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-600 to-emerald-800 flex items-center justify-center shadow-lg shadow-emerald-600/20">
-                  <Car size={22} className="text-white" />
-                </div>
-                <CardTitle className="text-sm text-white mt-2">Automobili</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-slate-400">Pregled vozila</p>
-              </CardContent>
-            </Card>
-
-            <Card
-              className="cursor-pointer border-0 bg-[#12121a]/90 backdrop-blur-xl hover:bg-[#1a1a28]/90 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-xl"
-              onClick={() => router.push("/notifications")}
-            >
-              <CardHeader className="pb-2">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-600 to-purple-800 flex items-center justify-center shadow-lg shadow-purple-600/20">
-                  <Bell size={22} className="text-white" />
-                </div>
-                <CardTitle className="text-sm text-white mt-2">Obaveštenja</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-slate-400">Pošalji obaveštenja</p>
-              </CardContent>
-            </Card>
-
-            <Card
-              className="cursor-pointer border-0 bg-[#12121a]/90 backdrop-blur-xl hover:bg-[#1a1a28]/90 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-xl"
-              onClick={() => router.push("/scheduleall")}
-            >
-              <CardHeader className="pb-2">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-600 to-orange-800 flex items-center justify-center shadow-lg shadow-orange-600/20">
-                  <Users size={22} className="text-white" />
-                </div>
-                <CardTitle className="text-sm text-white mt-2">Raspored vozača</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-slate-400">Pregled svih vozača</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          <NotificationSettings />
-          
-          <Button
-            onClick={handleLogout}
-            variant="outline"
-            className="w-full border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
-          >
-            <LogOut size={18} className="mr-2" />
-            Odjavi se
-          </Button>
-          
-          <p className="text-center text-xs text-slate-600 pt-4">
-            ROTRG Taxi Admin © {new Date().getFullYear()}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // ⭐ VOZAČ HOMEPAGE ⭐ (IMA RASPORED, NEMA ADMIN)
   return (
-    <div className="min-h-screen bg-[#0a0a0f]">
-      <div className="p-4 space-y-6">
-        <div className="flex justify-between items-center pt-4">
+    <AppPage>
+      <header className="relative overflow-hidden rounded-3xl border border-white/8 bg-gradient-to-br from-white/[0.065] to-white/[0.02] p-5 sm:p-7">
+        <div className="pointer-events-none absolute -right-16 -top-20 size-56 rounded-full bg-cyan-300/10 blur-3xl" />
+        <div className="relative flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-white">🚕 ROTRG</h1>
-            <p className="text-sm text-slate-400">Dobrodošli nazad</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-300/70">
+              {isAdmin ? "Administration" : "Driver workspace"}
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+              Welcome, {displayName}
+            </h1>
+            <p className="mt-1 text-sm text-slate-400">
+              {isAdmin ? "Your fleet overview at a glance." : "Everything you need for today’s shift."}
+            </p>
           </div>
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-lg shadow-blue-600/20">
-            <span className="text-white font-bold text-sm">👤</span>
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-200/15 bg-cyan-300/10 text-sm font-bold uppercase text-cyan-200">
+            {displayName.charAt(0)}
           </div>
         </div>
+      </header>
 
-        <div className="grid grid-cols-2 gap-4">
-          <Card
-            className="cursor-pointer border-0 bg-[#12121a]/90 backdrop-blur-xl hover:bg-[#1a1a28]/90 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-xl"
-            onClick={() => router.push("/cars")}
-          >
-            <CardHeader className="pb-2">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center shadow-lg shadow-blue-600/20">
-                <Car size={22} className="text-white" />
-              </div>
-              <CardTitle className="text-sm text-white mt-2">Automobili</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs text-slate-400">Pregled i slikanje vozila</p>
-            </CardContent>
-          </Card>
+      {isAdmin && (
+        <section>
+          <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
+            <StatCard label="Drivers" value={stats.drivers} icon={Users} />
+            <StatCard label="Vehicles" value={stats.vehicles} icon={CarFront} />
+            <StatCard label="Photos" value={stats.photos} icon={Camera} />
+          </div>
+        </section>
+      )}
 
-          <Card
-            className="cursor-pointer border-0 bg-[#12121a]/90 backdrop-blur-xl hover:bg-[#1a1a28]/90 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-xl"
-            onClick={() => router.push("/schedule")}
-          >
-            <CardHeader className="pb-2">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-600 to-emerald-800 flex items-center justify-center shadow-lg shadow-emerald-600/20">
-                <Calendar size={22} className="text-white" />
-              </div>
-              <CardTitle className="text-sm text-white mt-2">Raspored</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs text-slate-400">Prijava smena</p>
-            </CardContent>
-          </Card>
-
-          <Card
-            className="cursor-pointer border-0 bg-[#12121a]/90 backdrop-blur-xl hover:bg-[#1a1a28]/90 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-xl"
-            onClick={() => router.push("/notifications")}
-          >
-            <CardHeader className="pb-2">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-600 to-purple-800 flex items-center justify-center shadow-lg shadow-purple-600/20">
-                <Bell size={22} className="text-white" />
-              </div>
-              <CardTitle className="text-sm text-white mt-2">Obaveštenja</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs text-slate-400">Važne poruke od admina</p>
-            </CardContent>
-          </Card>
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold text-white">Quick access</h2>
+            <p className="mt-0.5 text-xs text-slate-500">Open the tools you use most.</p>
+          </div>
         </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {actions.map((action) => (
+            <ActionCard
+              key={action.href}
+              title={action.title}
+              description={action.description}
+              icon={action.icon}
+              tone={action.tone}
+              onClick={() => router.push(action.href)}
+            />
+          ))}
+        </div>
+      </section>
 
-        <NotificationSettings />
-      
-        <Button
-          onClick={handleLogout}
-          variant="outline"
-          className="w-full border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
-        >
-          <LogOut size={18} className="mr-2" />
-          Odjavi se
-        </Button>
+      <NotificationSettings />
 
-        <p className="text-center text-xs text-slate-600 pt-4">
-          ROTRG Taxi © {new Date().getFullYear()}
-        </p>
-      </div>
-    </div>
+      <Button
+        type="button"
+        onClick={handleLogout}
+        variant="outline"
+        className="h-11 w-full rounded-xl border-white/10 bg-white/[0.02] text-slate-400 hover:bg-white/[0.05] hover:text-white"
+      >
+        <LogOut size={17} className="mr-1" />
+        Sign out
+      </Button>
+
+      <p className="text-center text-[11px] text-slate-700">
+        ROTRG Taxi · {new Date().getFullYear()}
+      </p>
+    </AppPage>
   );
 }

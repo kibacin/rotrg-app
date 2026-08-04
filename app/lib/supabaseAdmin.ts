@@ -8,7 +8,7 @@ export function createSupabaseAdmin() {
 
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error(
-      'Nedostaje NEXT_PUBLIC_SUPABASE_URL ili SUPABASE_SERVICE_ROLE_KEY'
+      'NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing'
     );
   }
 
