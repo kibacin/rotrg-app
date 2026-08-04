@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Car, Shield, Zap } from "lucide-react";
+import { Car } from "lucide-react";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -29,7 +29,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/home");
+    router.replace("/home");
   };
 
   return (

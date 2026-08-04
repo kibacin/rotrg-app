@@ -101,9 +101,18 @@ export default function NotificationsPage() {
 
     // 3. Pošalji notifikacije preko API rute
 try {
+  const { data: { session } } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    throw new Error('Nema aktivne sesije');
+  }
+
   const response = await fetch('/api/send-notification', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
+    },
     body: JSON.stringify({ 
       title, 
       body: content, 
@@ -113,7 +122,7 @@ try {
 
   if (response.ok) {
     const data = await response.json();
-    alert(`✅ Obaveštenje je dodato i poslato!`);
+    alert(`✅ Obaveštenje je dodato i poslato na ${data.result?.sent ?? 0} uređaja!`);
   } else {
     alert('✅ Obaveštenje je dodato, ali notifikacije nisu poslate');
   }
@@ -122,8 +131,9 @@ try {
   alert('✅ Obaveštenje je dodato, ali notifikacije nisu poslate (greška)');
 }
 
-    } catch (error: any) {
-      alert("❌ Greška: " + error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Nepoznata greška";
+      alert("❌ Greška: " + message);
     } finally {
       setSaving(false);
     }
@@ -141,8 +151,9 @@ try {
       if (error) throw error;
 
       setAnnouncements(announcements.filter(a => a.id !== id));
-    } catch (error: any) {
-      alert("❌ Greška: " + error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Nepoznata greška";
+      alert("❌ Greška: " + message);
     }
   };
 

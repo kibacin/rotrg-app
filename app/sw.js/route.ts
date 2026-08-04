@@ -1,50 +1,81 @@
 // app/sw.js/route.ts
 export async function GET() {
   const swContent = `
-const CACHE_NAME = 'rotrg-cache-v1';
-const urlsToCache = ['/', '/home', '/cars', '/schedule', '/notifications', '/admin'];
-
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('✅ Cache otvoren');
-        return cache.addAll(urlsToCache);
-      })
-  );
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    Promise.all([
+      caches.keys().then((cacheNames) => Promise.all(
+        cacheNames
+          .filter((cacheName) => cacheName.startsWith('rotrg-cache-'))
+          .map((cacheName) => caches.delete(cacheName))
+      )),
+      self.clients.claim(),
+    ])
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        if (response) {
-          return response;
-        }
-        return fetch(event.request);
-      })
-  );
+self.addEventListener('push', (event) => {
+  let payload = {};
+
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = {
+      body: event.data ? event.data.text() : 'Imate novo obaveštenje',
+    };
+  }
+
+  const title = payload.title || 'ROTRG Taxi';
+  const options = {
+    body: payload.body || 'Imate novo obaveštenje',
+    icon: payload.icon || '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: payload.tag || 'rotrg-' + Date.now(),
+    data: {
+      url: payload.url || '/notifications',
+    },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const targetUrl = new URL(
+    event.notification.data?.url || '/notifications',
+    self.location.origin
+  ).href;
+
+  event.waitUntil((async () => {
+    const windowClients = await clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true,
+    });
+
+    for (const client of windowClients) {
+      if ('navigate' in client) {
+        await client.navigate(targetUrl);
+      }
+      if ('focus' in client) {
+        return client.focus();
+      }
+    }
+
+    return clients.openWindow(targetUrl);
+  })());
 });
 `;
 
   return new Response(swContent, {
     headers: {
       'Content-Type': 'application/javascript',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Service-Worker-Allowed': '/',
     },
   });
 }

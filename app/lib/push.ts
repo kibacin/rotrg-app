@@ -1,47 +1,33 @@
-import { supabase } from './supabaseClient';
+import 'server-only';
+
 import webpush from 'web-push';
+import { createSupabaseAdmin } from './supabaseAdmin';
 
-// VAPID ključevi
-const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!;
-const privateKey = process.env.VAPID_PRIVATE_KEY!;
+function configureWebPush() {
+  const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+  const privateKey = process.env.VAPID_PRIVATE_KEY;
 
-webpush.setVapidDetails(
-  'mailto:admin@rotrg.com',
-  publicKey,
-  privateKey
-);
-
-// Čuvanje pretplate u bazi
-export async function saveSubscription(userId: string, subscription: PushSubscription) {
-  const { error } = await supabase
-    .from('push_subscriptions')
-    .upsert({
-      user_id: userId,
-      endpoint: subscription.endpoint,
-      // @ts-ignore
-      p256dh: subscription.keys?.p256dh || '',
-      // @ts-ignore
-      auth: subscription.keys?.auth || '',
-    }, {
-      onConflict: 'user_id, endpoint'
-    });
-
-  if (error) {
-    console.error('Greška pri čuvanju pretplate:', error);
-    throw error;
+  if (!publicKey || !privateKey) {
+    throw new Error('Nedostaju VAPID ključevi');
   }
+
+  webpush.setVapidDetails(
+    'mailto:admin@rotrg.com',
+    publicKey,
+    privateKey
+  );
 }
 
-// Slanje notifikacije svim pretplaćenim korisnicima
 export async function sendNotificationToAll(title: string, body: string, url?: string) {
-  // Dohvati sve pretplate
-  const { data: subscriptions, error } = await supabase
+  configureWebPush();
+  const supabaseAdmin = createSupabaseAdmin();
+
+  const { data: subscriptions, error } = await supabaseAdmin
     .from('push_subscriptions')
     .select('*');
 
   if (error) {
-    console.error('Greška pri dohvatanju pretplata:', error);
-    return;
+    throw error;
   }
 
   const payload = JSON.stringify({
@@ -51,9 +37,8 @@ export async function sendNotificationToAll(title: string, body: string, url?: s
     icon: '/icons/icon-192.png',
   });
 
-  // Pošalji notifikaciju svakoj pretplati
-  const results = await Promise.allSettled(
-    subscriptions.map(async (sub) => {
+  const results = await Promise.all(
+    (subscriptions ?? []).map(async (sub) => {
       try {
         await webpush.sendNotification(
           {
@@ -65,19 +50,24 @@ export async function sendNotificationToAll(title: string, body: string, url?: s
           },
           payload
         );
-        return { success: true, endpoint: sub.endpoint };
-      } catch (error) {
-        // Ako je endpoint invalid, obriši ga iz baze
-        if (error instanceof Error && error.message.includes('410')) {
-          await supabase
+        return true;
+      } catch (error: unknown) {
+        const statusCode = (error as { statusCode?: number }).statusCode;
+        if (statusCode === 404 || statusCode === 410) {
+          await supabaseAdmin
             .from('push_subscriptions')
             .delete()
             .eq('endpoint', sub.endpoint);
         }
-        return { success: false, endpoint: sub.endpoint, error };
+        console.error('Greška pri slanju push notifikacije:', error);
+        return false;
       }
     })
   );
 
-  return results;
+  return {
+    total: results.length,
+    sent: results.filter(Boolean).length,
+    failed: results.filter((success) => !success).length,
+  };
 }

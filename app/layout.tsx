@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import SWRegister from './sw-register';
 import { useEffect, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabaseClient";
 import "./globals.css";
 
@@ -23,17 +24,7 @@ export default function RootLayout({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user) {
-        setIsLoggedIn(true);
-        await fetchUserRole(session.user.id);
-      } else {
-        setIsLoggedIn(false);
-        setLoading(false);
-      }
-    };
+    let isActive = true;
 
     const fetchUserRole = async (userId: string) => {
       const { data } = await supabase
@@ -42,138 +33,55 @@ export default function RootLayout({
         .eq("id", userId)
         .maybeSingle();
 
+      if (!isActive) return;
       setIsAdmin(data?.role === "admin");
+    };
+
+    const applySession = async (session: Session | null) => {
+      if (!isActive) return;
+
+      if (session?.user) {
+        setIsLoggedIn(true);
+        await fetchUserRole(session.user.id);
+
+        if (!isActive) return;
+        setLoading(false);
+
+        if (pathname === '/') {
+          router.replace('/home');
+        }
+        return;
+      }
+
+      setIsLoggedIn(false);
+      setIsAdmin(false);
       setLoading(false);
+
+      if (pathname !== '/') {
+        router.replace('/');
+      }
+    };
+
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      await applySession(session);
     };
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'SIGNED_IN' && session?.user) {
-          setIsLoggedIn(true);
-          setLoading(false);
-          await fetchUserRole(session.user.id);
-          if (pathname === '/') {
-            router.push('/home');
-          }
-        } else if (event === 'SIGNED_OUT') {
-          setIsLoggedIn(false);
-          setIsAdmin(false);
-          setLoading(false);
-          if (pathname !== '/') {
-            router.push('/');
-          }
-        }
+      (_event, session) => {
+        window.setTimeout(() => {
+          void applySession(session);
+        }, 0);
       }
     );
 
-    checkSession();
+    void checkSession();
 
     return () => {
+      isActive = false;
       subscription.unsubscribe();
     };
   }, [pathname, router]);
-
-  // ⭐ AUTOMATSKA PRETPLATA SA ČEKANJEM NA SW ⭐
-  useEffect(() => {
-    const waitForSW = async () => {
-      if (!isLoggedIn) return null;
-      
-      if ('serviceWorker' in navigator) {
-        try {
-          const registration = await navigator.serviceWorker.getRegistration();
-          if (registration) {
-            if (registration.active) {
-              console.log('✅ SW već aktivan');
-              return registration;
-            } else {
-              console.log('⏳ Čekam da SW postane aktivan...');
-              await new Promise((resolve) => {
-                const checkActive = () => {
-                  if (registration.active) {
-                    console.log('✅ SW je aktivan!');
-                    resolve(null);
-                  } else {
-                    setTimeout(checkActive, 500);
-                  }
-                };
-                checkActive();
-              });
-              return registration;
-            }
-          } else {
-            console.log('❌ Nema SW registracije');
-            return null;
-          }
-        } catch (error) {
-          console.log('❌ Greška pri čekanju SW:', error);
-          return null;
-        }
-      }
-      return null;
-    };
-
-    const autoSubscribe = async () => {
-      if (!isLoggedIn) return;
-
-      if ('serviceWorker' in navigator && 'PushManager' in window) {
-        try {
-          const registration = await waitForSW();
-          if (!registration) {
-            console.log('❌ SW nije dostupan');
-            return;
-          }
-
-          const existingSubscription = await registration.pushManager.getSubscription();
-          if (existingSubscription) {
-            console.log('✅ Već pretplaćen');
-            return;
-          }
-
-          const permission = await Notification.requestPermission();
-          if (permission !== 'granted') {
-            console.log('❌ Notifikacije odbijene');
-            return;
-          }
-
-          const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-          if (!publicKey) {
-            console.log('❌ VAPID ključ nedostaje');
-            return;
-          }
-
-          const subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: publicKey,
-          });
-
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session?.access_token) {
-            console.log('❌ Nema sesije');
-            return;
-          }
-
-          const response = await fetch('/api/subscribe', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify(subscription),
-          });
-
-          if (response.ok) {
-            console.log('✅ Notifikacije automatski uključene');
-          } else {
-            console.log('❌ Greška pri čuvanju pretplate');
-          }
-        } catch (error) {
-          console.log('❌ Greška pri automatskoj pretplati:', error);
-        }
-      }
-    };
-
-    autoSubscribe();
-  }, [isLoggedIn]);
 
   // ⭐ MENI ⭐
   let navItems = [];
@@ -196,7 +104,10 @@ export default function RootLayout({
 
   const isLoginPage = pathname === "/";
 
-  if (loading && isLoginPage) {
+  const isRedirecting =
+    (isLoginPage && isLoggedIn) || (!isLoginPage && !isLoggedIn);
+
+  if (loading || isRedirecting) {
     return (
       <html lang="sr" className={inter.className}>
         <body className="bg-[#0a0a0f]">

@@ -7,6 +7,7 @@ import { getCurrentUser } from "../lib/authFunctions";
 import { supabase } from "../lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { NotificationSettings } from "@/components/notification-settings";
 import { Car, Calendar, Bell, Settings, LogOut, Users } from "lucide-react";
 
 export default function HomePage() {
@@ -55,7 +56,7 @@ export default function HomePage() {
     };
 
     checkUser();
-  }, []);
+  }, [router]);
 
   const handleLogout = async () => {
     await signOut();
@@ -175,6 +176,8 @@ export default function HomePage() {
               </CardContent>
             </Card>
           </div>
+
+          <NotificationSettings />
           
           <Button
             onClick={handleLogout}
@@ -253,6 +256,8 @@ export default function HomePage() {
             </CardContent>
           </Card>
         </div>
+
+        <NotificationSettings />
       
         <Button
           onClick={handleLogout}
