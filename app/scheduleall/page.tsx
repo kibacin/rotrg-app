@@ -80,7 +80,7 @@ export default function ScheduleAllPage() {
       const end = addDays(start, 6);
       const { data, error } = await supabase
         .from("work_schedule")
-        .select("id, driver_id, work_date, shift_type, car_id")
+        .select("id, driver_id, work_date, shift_type, car_id, bled")
         .gte("work_date", format(start, "yyyy-MM-dd"))
         .lte("work_date", format(end, "yyyy-MM-dd"));
 
@@ -125,7 +125,7 @@ export default function ScheduleAllPage() {
       <PageHeader
         eyebrow="Team planning"
         title="Driver schedule"
-        description="Open a day, review each shift and assign vehicles."
+        description="Review each shift, Bled interest and vehicle assignment."
         icon={CalendarRange}
         actions={
           <div className="flex items-center gap-1.5">

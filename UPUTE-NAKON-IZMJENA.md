@@ -62,7 +62,16 @@ novu verziju. Skripta:
 Ako skriptu slučajno pokreneš ponovo, neće ponovo dodati istu kolonu, strani
 ključ ili indeks.
 
-## 4. Prebaci izmjene u GitHub
+## 4. Omogući Bled prijavu
+
+Za novu Bled opciju u Supabase SQL Editoru jednom pokreni cijeli sadržaj fajla
+`SUPABASE-BLED-MIGRATION.sql`.
+
+Skripta dodaje dnevno `bled` Yes/No polje u `work_schedule`. Postojeći rasporedi
+ostaju sačuvani i automatski dobijaju vrijednost `false` odnosno **No**. Također
+dozvoljava da vozač izabere samo Bled, bez obavezne normalne smjene.
+
+## 5. Prebaci izmjene u GitHub
 
 Prekopiraj izmijenjene fajlove u svoj lokalni projekat, zatim pokreni:
 
@@ -73,16 +82,18 @@ npm run build
 
 Ako build prođe, uradi commit i push. Vercel će automatski napraviti deployment.
 
-## 5. Provjeri novi raspored i vozila
+## 6. Provjeri novi raspored i vozila
 
 1. Kao vozač izaberi sutrašnju smjenu, zatim je ponovo pritisni da je ukloniš.
 2. Provjeri da današnji datum jeste zaključan.
-3. Kao admin otvori raspored, izaberi dan i dodijeli vozilo vozaču.
-4. Ponovo otvori vozačevu početnu stranicu ili **My schedule** i provjeri vozilo.
-5. U **Vehicles** pritisni vozilo, izaberi fotografije i potvrdi da se upload
+3. Za budući dan uključi **Bled → Yes**, a zatim provjeri da se vozač pojavio u
+   adminovoj Bled grupi za isti dan.
+4. Kao admin otvori raspored, izaberi dan i dodijeli vozilo vozaču.
+5. Ponovo otvori vozačevu početnu stranicu ili **My schedule** i provjeri vozilo.
+6. U **Vehicles** pritisni vozilo, izaberi fotografije i potvrdi da se upload
    otvara odmah te prikazuje smanjenu veličinu slika.
 
-## 6. Ponovo instaliraj PWA na telefonu
+## 7. Ponovo instaliraj PWA na telefonu
 
 Zbog promjene načina čuvanja sesije i starog service workera:
 
@@ -95,7 +106,7 @@ Zbog promjene načina čuvanja sesije i starog service workera:
 
 Nakon toga zatvori aplikaciju i ponovo je otvori. Korisnik treba ostati prijavljen.
 
-## 7. Test notifikacije
+## 8. Test notifikacije
 
 1. Prijavi se kao vozač i uključi obavijesti.
 2. U Supabase tabeli `push_subscriptions` provjeri da se pojavio novi red.

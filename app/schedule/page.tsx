@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, addWeeks, format, isPast, isToday, startOfWeek, subWeeks } from "date-fns";
-import { CalendarDays, CarFront, ChevronLeft, ChevronRight, Clock3, RotateCcw, X } from "lucide-react";
+import { CalendarDays, CarFront, ChevronLeft, ChevronRight, Clock3, MapPin, RotateCcw, X } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "../lib/authFunctions";
 import {
@@ -27,6 +27,7 @@ type DaySchedule = {
   shift: string | null;
   id: number | null;
   car: { name: string; plate: string } | null;
+  bled: boolean;
 };
 
 type ScheduleRow = {
@@ -34,6 +35,7 @@ type ScheduleRow = {
   work_date: string;
   shift_type: string | null;
   car_id: number | null;
+  bled: boolean;
   cars: { name: string; plate: string } | Array<{ name: string; plate: string }> | null;
 };
 
@@ -101,12 +103,13 @@ export default function SchedulePage() {
           shift: null,
           id: null,
           car: null,
+          bled: false,
         };
       });
 
       const { data, error } = await supabase
         .from("work_schedule")
-        .select("id, work_date, shift_type, car_id, cars(name, plate)")
+        .select("id, work_date, shift_type, car_id, bled, cars(name, plate)")
         .eq("driver_id", userId)
         .gte("work_date", format(start, "yyyy-MM-dd"))
         .lte("work_date", format(end, "yyyy-MM-dd"));
@@ -120,6 +123,7 @@ export default function SchedulePage() {
             day.shift = item.shift_type;
             day.id = item.id;
             day.car = Array.isArray(item.cars) ? item.cars[0] ?? null : item.cars;
+            day.bled = item.bled;
           }
         }
       }
@@ -181,21 +185,75 @@ export default function SchedulePage() {
 
     setSavingIndex(index);
     try {
-      const { error } = await supabase
-        .from("work_schedule")
-        .delete()
-        .eq("id", day.id);
+      const query = supabase.from("work_schedule");
+      const { error } = day.bled
+        ? await query.update({ shift_type: null, car_id: null }).eq("id", day.id)
+        : await query.delete().eq("id", day.id);
       if (error) throw error;
 
       setWeekDays((current) =>
         current.map((entry, entryIndex) =>
           entryIndex === index
-            ? { ...entry, id: null, shift: null, car: null }
+            ? { ...entry, id: day.bled ? entry.id : null, shift: null, car: null }
             : entry
         )
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "The availability could not be removed";
+      alert(`Error: ${message}`);
+    } finally {
+      setSavingIndex(null);
+    }
+  };
+
+  const setBledAvailability = async (index: number, bled: boolean) => {
+    if (!userId) return;
+    const day = weekDays[index];
+    if (!day || day.bled === bled) return;
+
+    setSavingIndex(index);
+    try {
+      let savedId = day.id;
+
+      if (day.id) {
+        if (!bled && !day.shift) {
+          const { error } = await supabase
+            .from("work_schedule")
+            .delete()
+            .eq("id", day.id);
+          if (error) throw error;
+          savedId = null;
+        } else {
+          const { error } = await supabase
+            .from("work_schedule")
+            .update({ bled })
+            .eq("id", day.id);
+          if (error) throw error;
+        }
+      } else if (bled) {
+        const { data, error } = await supabase
+          .from("work_schedule")
+          .insert({
+            driver_id: userId,
+            work_date: day.dateStr,
+            shift_type: null,
+            bled: true,
+          })
+          .select("id")
+          .single();
+        if (error) throw error;
+        savedId = data.id;
+      }
+
+      setWeekDays((current) =>
+        current.map((entry, entryIndex) =>
+          entryIndex === index
+            ? { ...entry, id: savedId, bled, car: savedId ? entry.car : null }
+            : entry
+        )
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Bled availability could not be saved";
       alert(`Error: ${message}`);
     } finally {
       setSavingIndex(null);
@@ -241,7 +299,7 @@ export default function SchedulePage() {
       <PageHeader
         eyebrow="Availability"
         title="My schedule"
-        description="Choose when you can work for each day."
+        description="Choose your shift and Bled availability for each day."
         icon={CalendarDays}
         actions={
           <div className="flex items-center gap-1.5">
@@ -380,6 +438,47 @@ export default function SchedulePage() {
                     )}
                   </>
                 )}
+
+                <div
+                  className={`mt-3 flex items-center gap-3 rounded-xl border px-3 py-3 transition ${
+                    day.bled
+                      ? "border-rose-300/20 bg-rose-300/[0.07]"
+                      : "border-white/8 bg-black/10"
+                  } ${isLocked ? "opacity-60" : ""}`}
+                >
+                  <div
+                    className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${
+                      day.bled ? "bg-rose-300/10 text-rose-300" : "bg-white/5 text-slate-600"
+                    }`}
+                  >
+                    <MapPin size={17} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-white">Bled</p>
+                    <p className="mt-0.5 text-[10px] text-slate-600">
+                      Include me as an option for Bled.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 rounded-xl border border-white/8 bg-[#0a111b] p-1">
+                    {([false, true] as const).map((value) => (
+                      <button
+                        key={String(value)}
+                        type="button"
+                        disabled={isLocked || savingIndex !== null}
+                        onClick={() => void setBledAvailability(index, value)}
+                        className={`rounded-lg px-3 py-1.5 text-[10px] font-semibold transition disabled:cursor-not-allowed ${
+                          day.bled === value
+                            ? value
+                              ? "bg-rose-300 text-slate-950"
+                              : "bg-white/10 text-white"
+                            : "text-slate-600 hover:text-slate-300"
+                        }`}
+                      >
+                        {value ? "Yes" : "No"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           );

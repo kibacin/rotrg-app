@@ -204,7 +204,7 @@ export default function HomePage() {
         },
         {
           title: "My schedule",
-          description: "Set your availability for the selected week",
+          description: "Set your shifts and Bled availability for the week",
           icon: CalendarDays,
           tone: "border-emerald-300/15 bg-emerald-300/10 text-emerald-300",
           href: "/schedule",

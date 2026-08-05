@@ -1,7 +1,7 @@
 "use client";
 
 import { addDays, format, isToday } from "date-fns";
-import { CarFront, CheckCircle2, Clock3, LoaderCircle, UserRound } from "lucide-react";
+import { CarFront, CheckCircle2, Clock3, LoaderCircle, MapPin, UserRound } from "lucide-react";
 import { getShiftBucket, getShiftLabel, type ShiftBucket } from "@/app/lib/schedule";
 
 export type ScheduleDriver = {
@@ -22,6 +22,7 @@ export type AdminScheduleEntry = {
   work_date: string;
   shift_type: string | null;
   car_id: number | null;
+  bled: boolean;
 };
 
 type AdminScheduleBoardProps = {
@@ -38,8 +39,8 @@ type AdminScheduleBoardProps = {
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const SHIFT_GROUPS: Array<{
-  value: ShiftBucket;
+const SCHEDULE_GROUPS: Array<{
+  value: ShiftBucket | "bled";
   label: string;
   description: string;
   tone: string;
@@ -73,6 +74,13 @@ const SHIFT_GROUPS: Array<{
     tone: "border-amber-300/15 bg-amber-300/[0.045]",
     dot: "bg-amber-300",
   },
+  {
+    value: "bled",
+    label: "Bled",
+    description: "Optional Bled availability",
+    tone: "border-rose-300/15 bg-rose-300/[0.045]",
+    dot: "bg-rose-300",
+  },
 ];
 
 export function AdminScheduleBoard({
@@ -89,8 +97,8 @@ export function AdminScheduleBoard({
   const weekDays = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
   const selectedDay = weekDays[selectedDayIndex] ?? weekDays[0];
   const selectedDate = format(selectedDay, "yyyy-MM-dd");
-  const selectedSchedules = schedules.filter(
-    (schedule) => schedule.work_date === selectedDate && getShiftBucket(schedule.shift_type)
+  const selectedSchedules = schedules.filter((schedule) =>
+    schedule.work_date === selectedDate && (getShiftBucket(schedule.shift_type) || schedule.bled)
   );
   const driverById = new Map(drivers.map((driver) => [driver.id, driver]));
 
@@ -99,8 +107,8 @@ export function AdminScheduleBoard({
       <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
         {weekDays.map((day, index) => {
           const date = format(day, "yyyy-MM-dd");
-          const count = schedules.filter(
-            (schedule) => schedule.work_date === date && getShiftBucket(schedule.shift_type)
+          const count = schedules.filter((schedule) =>
+            schedule.work_date === date && (getShiftBucket(schedule.shift_type) || schedule.bled)
           ).length;
           const selected = index === selectedDayIndex;
 
@@ -119,7 +127,7 @@ export function AdminScheduleBoard({
                 {isToday(day) ? "Today" : DAY_NAMES[index]}
               </span>
               <span className="mt-0.5 block text-sm font-semibold">{format(day, "d MMM")}</span>
-              <span className="mt-1 block text-[9px] text-slate-600">{count} available</span>
+              <span className="mt-1 block text-[9px] text-slate-600">{count} drivers</span>
             </button>
           );
         })}
@@ -129,22 +137,26 @@ export function AdminScheduleBoard({
         <div>
           <p className="text-sm font-semibold text-white">{format(selectedDay, "EEEE, MMMM d")}</p>
           <p className="mt-0.5 text-xs text-slate-600">
-            Drivers are grouped by their selected availability.
+            Drivers are grouped by shift and Bled interest.
           </p>
         </div>
         {loading ? (
           <LoaderCircle size={18} className="animate-spin text-cyan-300" />
         ) : (
           <span className="shrink-0 rounded-full bg-white/5 px-2.5 py-1 text-[10px] text-slate-500">
-            {selectedSchedules.length} total
+            {selectedSchedules.length} drivers
           </span>
         )}
       </div>
 
-      <div className={`grid gap-3 lg:grid-cols-2 2xl:grid-cols-4 ${loading ? "pointer-events-none opacity-55" : ""}`}>
-        {SHIFT_GROUPS.map((group) => {
+      <div className={`grid gap-3 lg:grid-cols-2 2xl:grid-cols-3 ${loading ? "pointer-events-none opacity-55" : ""}`}>
+        {SCHEDULE_GROUPS.map((group) => {
           const groupSchedules = selectedSchedules
-            .filter((schedule) => getShiftBucket(schedule.shift_type) === group.value)
+            .filter((schedule) =>
+              group.value === "bled"
+                ? schedule.bled
+                : getShiftBucket(schedule.shift_type) === group.value
+            )
             .sort((first, second) => {
               const firstName = driverById.get(first.driver_id)?.full_name ?? "";
               const secondName = driverById.get(second.driver_id)?.full_name ?? "";
@@ -190,39 +202,49 @@ export function AdminScheduleBoard({
                               {driver?.full_name || "Unknown driver"}
                             </p>
                             <div className="mt-0.5 flex items-center gap-1 text-[9px] text-slate-600">
-                              {group.value === "other" ? <Clock3 size={10} /> : <CheckCircle2 size={10} />}
-                              {getShiftLabel(schedule.shift_type)}
+                              {group.value === "bled" ? (
+                                <MapPin size={10} />
+                              ) : group.value === "other" ? (
+                                <Clock3 size={10} />
+                              ) : (
+                                <CheckCircle2 size={10} />
+                              )}
+                              {group.value === "bled" ? "Available for Bled" : getShiftLabel(schedule.shift_type)}
                             </div>
                           </div>
                         </div>
 
-                        <label className="mt-2.5 block">
-                          <span className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-slate-600">
-                            <CarFront size={10} /> Assigned vehicle
-                          </span>
-                          <select
-                            value={schedule.car_id ?? ""}
-                            disabled={assignmentBusy}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              onAssignCar(schedule.id, value ? Number(value) : null);
-                            }}
-                            className="h-9 w-full rounded-xl border border-white/10 bg-[#0c1420] px-2.5 text-[11px] text-slate-300 outline-none transition focus:border-cyan-300/30 disabled:cursor-wait disabled:opacity-50"
-                          >
-                            <option value="">No vehicle assigned</option>
-                            {cars.map((car) => (
-                              <option key={car.id} value={car.id}>
-                                {car.name} · {car.plate}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                        {group.value !== "bled" && (
+                          <>
+                            <label className="mt-2.5 block">
+                              <span className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-slate-600">
+                                <CarFront size={10} /> Assigned vehicle
+                              </span>
+                              <select
+                                value={schedule.car_id ?? ""}
+                                disabled={assignmentBusy}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  onAssignCar(schedule.id, value ? Number(value) : null);
+                                }}
+                                className="h-9 w-full rounded-xl border border-white/10 bg-[#0c1420] px-2.5 text-[11px] text-slate-300 outline-none transition focus:border-cyan-300/30 disabled:cursor-wait disabled:opacity-50"
+                              >
+                                <option value="">No vehicle assigned</option>
+                                {cars.map((car) => (
+                                  <option key={car.id} value={car.id}>
+                                    {car.name} · {car.plate}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
 
-                        {saving && <p className="mt-1 text-[9px] text-cyan-300">Saving assignment...</p>}
-                        {!saving && assignedCar && (
-                          <p className="mt-1 truncate text-[9px] text-emerald-300/70">
-                            Assigned: {assignedCar.name} · {assignedCar.plate}
-                          </p>
+                            {saving && <p className="mt-1 text-[9px] text-cyan-300">Saving assignment...</p>}
+                            {!saving && assignedCar && (
+                              <p className="mt-1 truncate text-[9px] text-emerald-300/70">
+                                Assigned: {assignedCar.name} · {assignedCar.plate}
+                              </p>
+                            )}
+                          </>
                         )}
                       </div>
                     );

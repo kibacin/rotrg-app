@@ -184,7 +184,7 @@ export default function AdminPage() {
       const end = addDays(start, 6);
       const { data, error } = await supabase
         .from("work_schedule")
-        .select("id, driver_id, work_date, shift_type, car_id")
+        .select("id, driver_id, work_date, shift_type, car_id, bled")
         .gte("work_date", format(start, "yyyy-MM-dd"))
         .lte("work_date", format(end, "yyyy-MM-dd"));
 
