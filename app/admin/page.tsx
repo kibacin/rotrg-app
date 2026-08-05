@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { addDays, addWeeks, format, isToday, startOfWeek, subWeeks } from "date-fns";
+import { addDays, addWeeks, format, startOfWeek, subWeeks } from "date-fns";
 import {
   CalendarDays,
   Camera,
@@ -21,6 +21,10 @@ import { getCurrentUser } from "../lib/authFunctions";
 import { AppPage, LoadingScreen, PageHeader } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  AdminScheduleBoard,
+  type AdminScheduleEntry,
+} from "@/components/admin-schedule-board";
 
 type Driver = {
   id: string;
@@ -30,12 +34,7 @@ type Driver = {
   created_at: string;
 };
 
-type Schedule = {
-  id: number;
-  driver_id: string;
-  work_date: string;
-  shift_type: string | null;
-};
+type Schedule = AdminScheduleEntry;
 
 type Car = {
   id: number;
@@ -65,8 +64,6 @@ type PhotoGroup = {
   uploadedAt: string;
   photos: CarPhoto[];
 };
-
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function groupPhotos(photos: CarPhoto[]): PhotoGroup[] {
   const groups = new Map<string, PhotoGroup>();
@@ -120,8 +117,11 @@ export default function AdminPage() {
   const [photos, setPhotos] = useState<CarPhoto[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [scheduleLoading, setScheduleLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [currentWeekStart, setCurrentWeekStart] = useState(new Date());
-  const [showAllSchedules, setShowAllSchedules] = useState(false);
+  const [selectedScheduleDay, setSelectedScheduleDay] = useState(() => (new Date().getDay() + 6) % 7);
+  const [savingScheduleId, setSavingScheduleId] = useState<number | null>(null);
   const [showAllDrivers, setShowAllDrivers] = useState(false);
   const [selectedCarId, setSelectedCarId] = useState<number | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<PhotoGroup | null>(null);
@@ -149,20 +149,13 @@ export default function AdminPage() {
         return;
       }
 
-      const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
-      const end = addDays(start, 6);
-      const [driversResult, carsResult, photosResult, schedulesResult] = await Promise.all([
+      const [driversResult, carsResult, photosResult] = await Promise.all([
         supabase.from("drivers").select("id, email, full_name, role, created_at").order("full_name"),
         supabase.from("cars").select("id, name, plate, year").order("name"),
         supabase
           .from("car_photos")
           .select("id, car_id, driver_id, photo_url, uploaded_at, cars(name, plate), drivers(full_name, email)")
           .order("uploaded_at", { ascending: false }),
-        supabase
-          .from("work_schedule")
-          .select("id, driver_id, work_date, shift_type")
-          .gte("work_date", format(start, "yyyy-MM-dd"))
-          .lte("work_date", format(end, "yyyy-MM-dd")),
       ]);
 
       if (!active) return;
@@ -170,8 +163,8 @@ export default function AdminPage() {
       setDrivers((driversResult.data ?? []) as Driver[]);
       setCars(loadedCars);
       setPhotos((photosResult.data ?? []) as unknown as CarPhoto[]);
-      setSchedules((schedulesResult.data ?? []) as Schedule[]);
       setSelectedCarId((current) => current ?? loadedCars[0]?.id ?? null);
+      setIsAdmin(true);
       setLoading(false);
     };
 
@@ -179,7 +172,34 @@ export default function AdminPage() {
     return () => {
       active = false;
     };
-  }, [currentWeekStart, router]);
+  }, [router]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    let active = true;
+
+    const loadWeekSchedule = async () => {
+      setScheduleLoading(true);
+      const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
+      const end = addDays(start, 6);
+      const { data, error } = await supabase
+        .from("work_schedule")
+        .select("id, driver_id, work_date, shift_type, car_id")
+        .gte("work_date", format(start, "yyyy-MM-dd"))
+        .lte("work_date", format(end, "yyyy-MM-dd"));
+
+      if (error) console.error("Could not load the weekly schedule:", error);
+      if (active) {
+        setSchedules((data ?? []) as Schedule[]);
+        setScheduleLoading(false);
+      }
+    };
+
+    void loadWeekSchedule();
+    return () => {
+      active = false;
+    };
+  }, [currentWeekStart, isAdmin]);
 
   const operationalDrivers = useMemo(
     () => drivers.filter((driver) => driver.role !== "admin"),
@@ -202,9 +222,26 @@ export default function AdminPage() {
   const selectedCar = availableCars.find((car) => car.id === selectedCarId) ?? null;
   const selectedCarGroups = photoGroups.filter((group) => group.carId === selectedCarId);
   const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
-  const weekDays = Array.from({ length: 7 }, (_, index) => addDays(start, index));
-  const visibleScheduleDrivers = showAllSchedules ? operationalDrivers : operationalDrivers.slice(0, 4);
   const visibleDrivers = showAllDrivers ? drivers : drivers.slice(0, 5);
+
+  const assignCar = async (scheduleId: number, carId: number | null) => {
+    setSavingScheduleId(scheduleId);
+    const previousSchedules = schedules;
+    setSchedules((current) =>
+      current.map((schedule) => schedule.id === scheduleId ? { ...schedule, car_id: carId } : schedule)
+    );
+
+    const { error } = await supabase
+      .from("work_schedule")
+      .update({ car_id: carId })
+      .eq("id", scheduleId);
+
+    if (error) {
+      setSchedules(previousSchedules);
+      alert(`Vehicle assignment could not be saved: ${error.message}`);
+    }
+    setSavingScheduleId(null);
+  };
 
   const openGroup = (group: PhotoGroup) => {
     setSelectedGroup(group);
@@ -258,7 +295,10 @@ export default function AdminPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => setCurrentWeekStart(new Date())}
+              onClick={() => {
+                setCurrentWeekStart(new Date());
+                setSelectedScheduleDay((new Date().getDay() + 6) % 7);
+              }}
               className="h-8 rounded-xl border-white/10 bg-white/[0.03] px-3 text-xs text-slate-300 hover:bg-white/[0.06] hover:text-white"
             >
               Today
@@ -276,64 +316,19 @@ export default function AdminPage() {
           </div>
         </div>
 
-        <div className="space-y-2">
-          {visibleScheduleDrivers.length === 0 ? (
-            <p className="rounded-2xl border border-white/7 bg-black/10 p-5 text-center text-sm text-slate-500">
-              No drivers found.
-            </p>
-          ) : (
-            visibleScheduleDrivers.map((driver) => {
-              const scheduleByDate = new Map(
-                schedules
-                  .filter((item) => item.driver_id === driver.id)
-                  .map((item) => [item.work_date, item.shift_type])
-              );
-
-              return (
-                <button
-                  type="button"
-                  key={driver.id}
-                  onClick={() => router.push("/scheduleall")}
-                  className="flex w-full items-center gap-3 rounded-2xl border border-white/7 bg-black/10 p-3 text-left transition hover:border-cyan-300/15 hover:bg-white/[0.04]"
-                >
-                  <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-cyan-300/10 text-xs font-semibold text-cyan-200">
-                    {driver.full_name?.charAt(0) || "D"}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-white">{driver.full_name}</p>
-                    <div className="mt-1.5 grid grid-cols-7 gap-1">
-                      {weekDays.map((day, index) => {
-                        const shift = scheduleByDate.get(format(day, "yyyy-MM-dd"));
-                        return (
-                          <div key={day.toISOString()} className="min-w-0 text-center">
-                            <span className={`block text-[8px] ${isToday(day) ? "text-cyan-300" : "text-slate-600"}`}>
-                              {DAY_NAMES[index]}
-                            </span>
-                            <span className={`mx-auto mt-1 block h-1 w-full max-w-5 rounded-full ${shift ? "bg-cyan-300/55" : "bg-white/5"}`} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <ChevronRight size={16} className="shrink-0 text-slate-700" />
-                </button>
-              );
-            })
-          )}
-        </div>
+        <AdminScheduleBoard
+          weekStart={start}
+          selectedDayIndex={selectedScheduleDay}
+          onSelectedDayIndexChange={setSelectedScheduleDay}
+          drivers={operationalDrivers}
+          cars={cars}
+          schedules={schedules}
+          loading={scheduleLoading}
+          savingScheduleId={savingScheduleId}
+          onAssignCar={(scheduleId, carId) => void assignCar(scheduleId, carId)}
+        />
 
         <div className="mt-3 flex flex-wrap gap-2">
-          {operationalDrivers.length > 4 && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setShowAllSchedules((value) => !value)}
-              className="rounded-xl text-xs text-slate-400 hover:bg-white/5 hover:text-white"
-            >
-              {showAllSchedules ? "Show less" : `Show ${operationalDrivers.length - 4} more`}
-              <ChevronDown className={showAllSchedules ? "rotate-180" : ""} />
-            </Button>
-          )}
           <Button
             type="button"
             variant="ghost"

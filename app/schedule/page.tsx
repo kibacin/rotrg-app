@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, addWeeks, format, isPast, isToday, startOfWeek, subWeeks } from "date-fns";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock3, X } from "lucide-react";
+import { CalendarDays, CarFront, ChevronLeft, ChevronRight, Clock3, RotateCcw, X } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "../lib/authFunctions";
 import {
   encodeCustomShift,
+  getShiftBucket,
   getShiftLabel,
   getShiftTone,
   parseCustomShift,
@@ -25,12 +26,15 @@ type DaySchedule = {
   dateStr: string;
   shift: string | null;
   id: number | null;
+  car: { name: string; plate: string } | null;
 };
 
 type ScheduleRow = {
   id: number;
   work_date: string;
   shift_type: string | null;
+  car_id: number | null;
+  cars: { name: string; plate: string } | Array<{ name: string; plate: string }> | null;
 };
 
 type CustomEditor = {
@@ -96,12 +100,13 @@ export default function SchedulePage() {
           dateStr: format(date, "yyyy-MM-dd"),
           shift: null,
           id: null,
+          car: null,
         };
       });
 
       const { data, error } = await supabase
         .from("work_schedule")
-        .select("id, work_date, shift_type")
+        .select("id, work_date, shift_type, car_id, cars(name, plate)")
         .eq("driver_id", userId)
         .gte("work_date", format(start, "yyyy-MM-dd"))
         .lte("work_date", format(end, "yyyy-MM-dd"));
@@ -109,11 +114,12 @@ export default function SchedulePage() {
       if (error) {
         console.error("Could not load the schedule:", error);
       } else {
-        for (const item of (data ?? []) as ScheduleRow[]) {
+        for (const item of (data ?? []) as unknown as ScheduleRow[]) {
           const day = days.find((entry) => entry.dateStr === item.work_date);
           if (day) {
             day.shift = item.shift_type;
             day.id = item.id;
+            day.car = Array.isArray(item.cars) ? item.cars[0] ?? null : item.cars;
           }
         }
       }
@@ -169,7 +175,39 @@ export default function SchedulePage() {
     }
   };
 
+  const removeShift = async (index: number) => {
+    const day = weekDays[index];
+    if (!day?.id) return;
+
+    setSavingIndex(index);
+    try {
+      const { error } = await supabase
+        .from("work_schedule")
+        .delete()
+        .eq("id", day.id);
+      if (error) throw error;
+
+      setWeekDays((current) =>
+        current.map((entry, entryIndex) =>
+          entryIndex === index
+            ? { ...entry, id: null, shift: null, car: null }
+            : entry
+        )
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The availability could not be removed";
+      alert(`Error: ${message}`);
+    } finally {
+      setSavingIndex(null);
+    }
+  };
+
   const selectShift = (index: number, choice: ShiftChoice) => {
+    if (getShiftBucket(weekDays[index]?.shift) === choice) {
+      void removeShift(index);
+      return;
+    }
+
     if (choice !== "other") {
       void saveShift(index, choice);
       return;
@@ -248,6 +286,7 @@ export default function SchedulePage() {
         {weekDays.map((day, index) => {
           const isPastDay = isPast(day.date) && !isToday(day.date);
           const isTodayDay = isToday(day.date);
+          const isLocked = isPastDay || isTodayDay;
           const selectedLabel = getShiftLabel(day.shift);
 
           return (
@@ -277,34 +316,69 @@ export default function SchedulePage() {
                   </span>
                 </div>
 
-                {isPastDay ? (
+                {day.car && (
+                  <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.06] px-3 py-2.5">
+                    <CarFront size={17} className="shrink-0 text-emerald-300" />
+                    <div className="min-w-0">
+                      <p className="text-[9px] font-semibold uppercase tracking-wider text-emerald-300/65">
+                        Assigned vehicle
+                      </p>
+                      <p className="truncate text-xs font-semibold text-white">
+                        {day.car.name} · {day.car.plate}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {isLocked ? (
                   <p className="rounded-xl border border-white/5 bg-black/10 px-3 py-2 text-center text-xs text-slate-600">
-                    Past days cannot be edited.
+                    {isTodayDay ? "Today is locked. Changes start from tomorrow." : "Past days cannot be edited."}
                   </p>
                 ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    {SHIFT_CHOICES.map((choice) => {
-                      const isCustom = day.shift?.startsWith("other|") && choice.value === "other";
-                      const selected = day.shift === choice.value || isCustom;
+                  <>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {SHIFT_CHOICES.map((choice) => {
+                        const selected = getShiftBucket(day.shift) === choice.value;
 
-                      return (
-                        <button
-                          key={choice.value}
-                          type="button"
-                          disabled={savingIndex !== null}
-                          onClick={() => selectShift(index, choice.value)}
-                          className={`rounded-xl border px-3 py-2.5 text-left transition disabled:cursor-wait disabled:opacity-50 ${
-                            selected
-                              ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-200"
-                              : "border-white/8 bg-black/10 text-slate-400 hover:border-white/15 hover:bg-white/[0.04] hover:text-white"
-                          }`}
-                        >
-                          <span className="block text-xs font-semibold">{choice.label}</span>
-                          <span className="mt-0.5 block text-[10px] text-slate-600">{choice.description}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                        return (
+                          <button
+                            key={choice.value}
+                            type="button"
+                            disabled={savingIndex !== null}
+                            onClick={() => selectShift(index, choice.value)}
+                            className={`rounded-xl border px-3 py-2.5 text-left transition disabled:cursor-wait disabled:opacity-50 ${
+                              selected
+                                ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-200"
+                                : "border-white/8 bg-black/10 text-slate-400 hover:border-white/15 hover:bg-white/[0.04] hover:text-white"
+                            }`}
+                          >
+                            <span className="block text-xs font-semibold">{choice.label}</span>
+                            <span className="mt-0.5 block text-[10px] text-slate-600">
+                              {selected ? "Tap again to remove" : choice.description}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {day.shift?.startsWith("other|") && (
+                      <button
+                        type="button"
+                        disabled={savingIndex !== null}
+                        onClick={() => {
+                          const custom = parseCustomShift(day.shift);
+                          setCustomEditor({
+                            index,
+                            start: custom?.start ?? "09:00",
+                            end: custom?.end ?? "17:00",
+                          });
+                        }}
+                        className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border border-amber-300/15 bg-amber-300/[0.05] px-3 py-2 text-[10px] font-medium text-amber-300 hover:bg-amber-300/10"
+                      >
+                        <RotateCcw size={13} /> Change custom hours
+                      </button>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>

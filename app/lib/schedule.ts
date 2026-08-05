@@ -1,4 +1,5 @@
 export type ShiftChoice = "07:00" | "15:30" | "whole_day" | "other";
+export type ShiftBucket = ShiftChoice;
 
 export const SHIFT_CHOICES: Array<{
   value: ShiftChoice;
@@ -29,6 +30,14 @@ export function parseCustomShift(value: string | null | undefined) {
   if (!start || !end) return null;
 
   return { start, end };
+}
+
+export function getShiftBucket(value: string | null | undefined): ShiftBucket | null {
+  if (value === "07:00" || value === "first") return "07:00";
+  if (value === "15:30" || value === "second") return "15:30";
+  if (value === "whole_day" || value === "third") return "whole_day";
+  if (value === "other" || value?.startsWith("other|")) return "other";
+  return null;
 }
 
 export function getShiftLabel(value: string | null | undefined) {

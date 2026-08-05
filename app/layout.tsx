@@ -5,7 +5,7 @@ import { Home, Car, CalendarDays, Bell, LayoutDashboard } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import SWRegister from './sw-register';
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabaseClient";
 import "./globals.css";
@@ -22,11 +22,13 @@ export default function RootLayout({
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const roleUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
 
     const fetchUserRole = async (userId: string) => {
+      if (roleUserIdRef.current === userId) return;
       const { data } = await supabase
         .from("drivers")
         .select("role")
@@ -34,6 +36,7 @@ export default function RootLayout({
         .maybeSingle();
 
       if (!isActive) return;
+      roleUserIdRef.current = userId;
       setIsAdmin(data?.role === "admin");
     };
 
@@ -47,19 +50,13 @@ export default function RootLayout({
         if (!isActive) return;
         setLoading(false);
 
-        if (pathname === '/') {
-          router.replace('/home');
-        }
         return;
       }
 
       setIsLoggedIn(false);
       setIsAdmin(false);
+      roleUserIdRef.current = null;
       setLoading(false);
-
-      if (pathname !== '/') {
-        router.replace('/');
-      }
     };
 
     const checkSession = async () => {
@@ -81,7 +78,17 @@ export default function RootLayout({
       isActive = false;
       subscription.unsubscribe();
     };
-  }, [pathname, router]);
+  }, []);
+
+  useEffect(() => {
+    if (loading) return;
+
+    if (pathname === "/" && isLoggedIn) {
+      router.replace("/home");
+    } else if (pathname !== "/" && !isLoggedIn) {
+      router.replace("/");
+    }
+  }, [isLoggedIn, loading, pathname, router]);
 
   let navItems;
 

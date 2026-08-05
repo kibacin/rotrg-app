@@ -29,18 +29,7 @@ VAPID_PRIVATE_KEY
 SUPABASE_SERVICE_ROLE_KEY
 ```
 
-## 2. Prebaci izmjene u GitHub
-
-Prekopiraj izmijenjene fajlove u svoj lokalni projekat, zatim pokreni:
-
-```bash
-npm install
-npm run build
-```
-
-Ako build prođe, uradi commit i push. Vercel će automatski napraviti deployment.
-
-## 3. Omogući nove vrijednosti smjena u Supabaseu
+## 2. Omogući nove vrijednosti smjena u Supabaseu
 
 U novoj verziji smjene su `7:00`, `15:30`, `Whole day` i `Other`. Vrijednost za
 `Other` se čuva zajedno sa početnim i završnim vremenom u postojećoj koloni
@@ -54,7 +43,46 @@ možeš preskočiti. Ako Supabase pri čuvanju nove smjene prijavi grešku, otvo
 Zatim kopiraj i pokreni sadržaj fajla `SUPABASE-SHIFT-MIGRATION.sql`. Skripta
 zadržava postojeće rasporede i dozvoljava nove vrijednosti.
 
-## 4. Ponovo instaliraj PWA na telefonu
+## 3. Omogući dodjelu vozila i brisanje dostupnosti
+
+Prije postavljanja ove verzije otvori:
+
+`Supabase → SQL Editor → New query`
+
+Kopiraj i pokreni cijeli sadržaj fajla
+`SUPABASE-CAR-ASSIGNMENT-MIGRATION.sql`. Ovo je obavezan jednokratni korak za
+novu verziju. Skripta:
+
+- dodaje `car_id` u postojeću tabelu `work_schedule`;
+- povezuje raspored sa tabelom `cars`;
+- omogućava adminu da dodijeli ili promijeni vozilo;
+- omogućava vozaču da obriše vlastitu prijavu dostupnosti;
+- ne briše postojeće vozače, vozila ni rasporede.
+
+Ako skriptu slučajno pokreneš ponovo, neće ponovo dodati istu kolonu, strani
+ključ ili indeks.
+
+## 4. Prebaci izmjene u GitHub
+
+Prekopiraj izmijenjene fajlove u svoj lokalni projekat, zatim pokreni:
+
+```bash
+npm install
+npm run build
+```
+
+Ako build prođe, uradi commit i push. Vercel će automatski napraviti deployment.
+
+## 5. Provjeri novi raspored i vozila
+
+1. Kao vozač izaberi sutrašnju smjenu, zatim je ponovo pritisni da je ukloniš.
+2. Provjeri da današnji datum jeste zaključan.
+3. Kao admin otvori raspored, izaberi dan i dodijeli vozilo vozaču.
+4. Ponovo otvori vozačevu početnu stranicu ili **My schedule** i provjeri vozilo.
+5. U **Vehicles** pritisni vozilo, izaberi fotografije i potvrdi da se upload
+   otvara odmah te prikazuje smanjenu veličinu slika.
+
+## 6. Ponovo instaliraj PWA na telefonu
 
 Zbog promjene načina čuvanja sesije i starog service workera:
 
@@ -67,7 +95,7 @@ Zbog promjene načina čuvanja sesije i starog service workera:
 
 Nakon toga zatvori aplikaciju i ponovo je otvori. Korisnik treba ostati prijavljen.
 
-## 5. Test notifikacije
+## 7. Test notifikacije
 
 1. Prijavi se kao vozač i uključi obavijesti.
 2. U Supabase tabeli `push_subscriptions` provjeri da se pojavio novi red.

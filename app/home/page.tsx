@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { format, isToday } from "date-fns";
 import {
   Bell,
   CalendarDays,
@@ -18,11 +19,22 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { NotificationSettings } from "@/components/notification-settings";
 import { AppPage, LoadingScreen } from "@/components/app-shell";
+import { getShiftLabel } from "../lib/schedule";
 
 type DashboardStats = {
   drivers: number;
   vehicles: number;
   photos: number;
+};
+
+type VehicleAssignment = {
+  work_date: string;
+  shift_type: string | null;
+  cars: { name: string; plate: string } | null;
+};
+
+type VehicleAssignmentResult = Omit<VehicleAssignment, "cars"> & {
+  cars: VehicleAssignment["cars"] | Array<NonNullable<VehicleAssignment["cars"]>>;
 };
 
 type ActionCardProps = {
@@ -72,6 +84,7 @@ export default function HomePage() {
   const [displayName, setDisplayName] = useState("Driver");
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<DashboardStats>({ drivers: 0, vehicles: 0, photos: 0 });
+  const [nextAssignment, setNextAssignment] = useState<VehicleAssignment | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -108,6 +121,30 @@ export default function HomePage() {
           vehicles: vehiclesResult.count ?? 0,
           photos: photosResult.count ?? 0,
         });
+      } else {
+        const { data: assignment, error: assignmentError } = await supabase
+          .from("work_schedule")
+          .select("work_date, shift_type, cars(name, plate)")
+          .eq("driver_id", user.id)
+          .not("car_id", "is", null)
+          .gte("work_date", format(new Date(), "yyyy-MM-dd"))
+          .order("work_date", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        if (!assignmentError && active) {
+          const loadedAssignment = assignment as unknown as VehicleAssignmentResult | null;
+          setNextAssignment(
+            loadedAssignment
+              ? {
+                  ...loadedAssignment,
+                  cars: Array.isArray(loadedAssignment.cars)
+                    ? loadedAssignment.cars[0] ?? null
+                    : loadedAssignment.cars,
+                }
+              : null
+          );
+        }
       }
 
       setLoading(false);
@@ -209,6 +246,41 @@ export default function HomePage() {
             <StatCard label="Drivers" value={stats.drivers} icon={Users} />
             <StatCard label="Vehicles" value={stats.vehicles} icon={CarFront} />
             <StatCard label="Photos" value={stats.photos} icon={Camera} />
+          </div>
+        </section>
+      )}
+
+      {!isAdmin && nextAssignment?.cars && (
+        <section className="relative overflow-hidden rounded-3xl border border-emerald-300/15 bg-gradient-to-br from-emerald-300/[0.08] to-cyan-300/[0.035] p-4 sm:p-5">
+          <div className="pointer-events-none absolute -right-10 -top-12 size-36 rounded-full bg-emerald-300/10 blur-3xl" />
+          <div className="relative flex items-center gap-3.5">
+            <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-300/20 bg-emerald-300/10 text-emerald-300">
+              <CarFront size={23} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300/70">
+                Next assigned vehicle
+              </p>
+              <p className="mt-1 truncate font-semibold text-white">
+                {nextAssignment.cars.name} · {nextAssignment.cars.plate}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-400">
+                {isToday(new Date(`${nextAssignment.work_date}T12:00:00`))
+                  ? "Today"
+                  : format(new Date(`${nextAssignment.work_date}T12:00:00`), "EEEE, MMM d")}
+                {" · "}{getShiftLabel(nextAssignment.shift_type)}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => router.push("/schedule")}
+              aria-label="Open schedule"
+              className="rounded-xl text-emerald-300 hover:bg-emerald-300/10 hover:text-emerald-200"
+            >
+              <ChevronRight />
+            </Button>
           </div>
         </section>
       )}
