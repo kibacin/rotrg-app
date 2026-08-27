@@ -1,3 +1,5 @@
+-- LEGACY MIGRATION: do not run for the current release.
+-- Use SUPABASE-COMPLETE-UPGRADE.sql instead.
 -- Run once in Supabase SQL Editor before deploying the Bled availability UI.
 -- Existing schedules, vehicle assignments and drivers are preserved.
 

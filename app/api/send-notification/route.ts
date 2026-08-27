@@ -1,28 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendNotificationToAll } from '@/app/lib/push';
-import { authenticateRequest } from '@/app/lib/serverAuth';
-import { createSupabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { authenticateAdmin } from '@/app/lib/serverAuth';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
-    const { user, error: authError } = await authenticateRequest(request);
-    if (!user) {
-      return NextResponse.json({ error: authError }, { status: 401 });
-    }
-
-    const supabaseAdmin = createSupabaseAdmin();
-    const { data: driver, error: roleError } = await supabaseAdmin
-      .from('drivers')
-      .select('role')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    if (roleError || driver?.role !== 'admin') {
+    const authentication = await authenticateAdmin(request);
+    if (!authentication.user) {
       return NextResponse.json(
-        { error: 'Only an administrator can send notifications' },
-        { status: 403 }
+        { error: authentication.error },
+        { status: authentication.error === 'Niste prijavljeni' ? 401 : 403 }
       );
     }
 

@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateRequest } from '@/app/lib/serverAuth';
-import { createSupabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { authenticateActiveUser } from '@/app/lib/serverAuth';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
-    const { user, error: authError } = await authenticateRequest(request);
-    if (!user) {
+    const authentication = await authenticateActiveUser(request);
+    if (!authentication.user || !authentication.supabaseAdmin) {
       return NextResponse.json(
-        { error: authError },
+        { error: authentication.error },
         { status: 401 }
       );
     }
@@ -30,18 +29,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabaseAdmin = createSupabaseAdmin();
+    const supabaseAdmin = authentication.supabaseAdmin;
 
     await supabaseAdmin
       .from('push_subscriptions')
       .delete()
       .eq('endpoint', endpoint)
-      .neq('user_id', user.id);
+      .neq('user_id', authentication.user.id);
 
     const { error: insertError } = await supabaseAdmin
       .from('push_subscriptions')
       .upsert({
-        user_id: user.id,
+        user_id: authentication.user.id,
         endpoint,
         p256dh,
         auth,

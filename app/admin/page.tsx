@@ -13,7 +13,9 @@ import {
   ChevronRight,
   Images,
   LayoutDashboard,
+  UserPlus,
   Users,
+  Wrench,
   X,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
@@ -21,6 +23,10 @@ import { getCurrentUser } from "../lib/authFunctions";
 import { AppPage, LoadingScreen, PageHeader } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  saveVehicleAssignment,
+  type AssignmentKind,
+} from "../lib/vehicleAssignment";
 import {
   AdminScheduleBoard,
   type AdminScheduleEntry,
@@ -31,6 +37,7 @@ type Driver = {
   email: string;
   full_name: string;
   role: string;
+  active: boolean;
   created_at: string;
 };
 
@@ -48,6 +55,8 @@ type CarPhoto = {
   car_id: number;
   driver_id: string;
   photo_url: string;
+  report_id: string | null;
+  storage_path: string | null;
   uploaded_at: string;
   cars: { name: string; plate: string } | null;
   drivers: { full_name: string; email: string } | null;
@@ -70,7 +79,7 @@ function groupPhotos(photos: CarPhoto[]): PhotoGroup[] {
 
   for (const photo of photos) {
     const dateKey = format(new Date(photo.uploaded_at), "yyyy-MM-dd");
-    const key = `${photo.car_id}-${photo.driver_id}-${dateKey}`;
+    const key = photo.report_id || `${photo.car_id}-${photo.driver_id}-${dateKey}`;
     const existing = groups.get(key);
 
     if (existing) {
@@ -121,7 +130,7 @@ export default function AdminPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentWeekStart, setCurrentWeekStart] = useState(new Date());
   const [selectedScheduleDay, setSelectedScheduleDay] = useState(() => (new Date().getDay() + 6) % 7);
-  const [savingScheduleId, setSavingScheduleId] = useState<number | null>(null);
+  const [savingAssignmentKey, setSavingAssignmentKey] = useState<string | null>(null);
   const [showAllDrivers, setShowAllDrivers] = useState(false);
   const [selectedCarId, setSelectedCarId] = useState<number | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<PhotoGroup | null>(null);
@@ -150,11 +159,12 @@ export default function AdminPage() {
       }
 
       const [driversResult, carsResult, photosResult] = await Promise.all([
-        supabase.from("drivers").select("id, email, full_name, role, created_at").order("full_name"),
+        supabase.from("drivers").select("id, email, full_name, role, active, created_at").order("full_name"),
         supabase.from("cars").select("id, name, plate, year").order("name"),
         supabase
           .from("car_photos")
-          .select("id, car_id, driver_id, photo_url, uploaded_at, cars(name, plate), drivers(full_name, email)")
+          .select("id, car_id, driver_id, photo_url, report_id, storage_path, uploaded_at, cars(name, plate), drivers(full_name, email)")
+          .gte("uploaded_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
           .order("uploaded_at", { ascending: false }),
       ]);
 
@@ -184,7 +194,7 @@ export default function AdminPage() {
       const end = addDays(start, 6);
       const { data, error } = await supabase
         .from("work_schedule")
-        .select("id, driver_id, work_date, shift_type, car_id, bled")
+        .select("id, driver_id, work_date, shift_type, car_id, bled_car_id, bled")
         .gte("work_date", format(start, "yyyy-MM-dd"))
         .lte("work_date", format(end, "yyyy-MM-dd"));
 
@@ -202,7 +212,7 @@ export default function AdminPage() {
   }, [currentWeekStart, isAdmin]);
 
   const operationalDrivers = useMemo(
-    () => drivers.filter((driver) => driver.role !== "admin"),
+    () => drivers.filter((driver) => driver.role !== "admin" && driver.active),
     [drivers]
   );
   const photoGroups = useMemo(() => groupPhotos(photos), [photos]);
@@ -224,23 +234,32 @@ export default function AdminPage() {
   const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
   const visibleDrivers = showAllDrivers ? drivers : drivers.slice(0, 5);
 
-  const assignCar = async (scheduleId: number, carId: number | null) => {
-    setSavingScheduleId(scheduleId);
+  const assignCar = async (
+    scheduleId: number,
+    carId: number | null,
+    assignmentKind: AssignmentKind
+  ) => {
+    const assignmentKey = `${scheduleId}:${assignmentKind}`;
+    const assignmentColumn = assignmentKind === "bled" ? "bled_car_id" : "car_id";
+    setSavingAssignmentKey(assignmentKey);
     const previousSchedules = schedules;
     setSchedules((current) =>
-      current.map((schedule) => schedule.id === scheduleId ? { ...schedule, car_id: carId } : schedule)
+      current.map((schedule) =>
+        schedule.id === scheduleId
+          ? { ...schedule, [assignmentColumn]: carId }
+          : schedule
+      )
     );
 
-    const { error } = await supabase
-      .from("work_schedule")
-      .update({ car_id: carId })
-      .eq("id", scheduleId);
-
-    if (error) {
+    try {
+      await saveVehicleAssignment(scheduleId, carId, assignmentKind);
+    } catch (error) {
       setSchedules(previousSchedules);
-      alert(`Vehicle assignment could not be saved: ${error.message}`);
+      const message = error instanceof Error ? error.message : "Vehicle assignment could not be saved";
+      alert(`Error: ${message}`);
+    } finally {
+      setSavingAssignmentKey(null);
     }
-    setSavingScheduleId(null);
   };
 
   const openGroup = (group: PhotoGroup) => {
@@ -324,8 +343,10 @@ export default function AdminPage() {
           cars={cars}
           schedules={schedules}
           loading={scheduleLoading}
-          savingScheduleId={savingScheduleId}
-          onAssignCar={(scheduleId, carId) => void assignCar(scheduleId, carId)}
+          savingAssignmentKey={savingAssignmentKey}
+          onAssignCar={(scheduleId, carId, assignmentKind) =>
+            void assignCar(scheduleId, carId, assignmentKind)
+          }
         />
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -365,11 +386,13 @@ export default function AdminPage() {
                 <p className="truncate text-xs text-slate-600">{driver.email}</p>
               </div>
               <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
-                driver.role === "admin"
+                !driver.active
+                  ? "border-red-300/15 bg-red-300/10 text-red-300"
+                  : driver.role === "admin"
                   ? "border-violet-300/15 bg-violet-300/10 text-violet-300"
                   : "border-cyan-300/15 bg-cyan-300/10 text-cyan-300"
               }`}>
-                {driver.role}
+                {driver.active ? driver.role : "inactive"}
               </span>
             </div>
           ))}
@@ -386,6 +409,24 @@ export default function AdminPage() {
             <ChevronDown className={showAllDrivers ? "rotate-180" : ""} />
           </Button>
         )}
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            onClick={() => router.push("/admin/drivers")}
+            className="h-10 rounded-xl bg-cyan-300 font-semibold text-slate-950 hover:bg-cyan-200"
+          >
+            <UserPlus size={16} /> Manage driver accounts
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.push("/services")}
+            className="h-10 rounded-xl border-white/10 bg-white/[0.03] text-slate-300"
+          >
+            <Wrench size={16} /> Vehicles & service
+          </Button>
+        </div>
       </section>
 
       <section className="rounded-3xl border border-white/8 bg-white/[0.025] p-4 sm:p-5">
@@ -394,7 +435,7 @@ export default function AdminPage() {
             <Images size={18} className="text-cyan-300" />
             <h2 className="font-semibold text-white">Vehicle photo history</h2>
           </div>
-          <p className="mt-1 text-xs text-slate-500">Choose a vehicle to see all reports from every driver.</p>
+          <p className="mt-1 text-xs text-slate-500">Choose a vehicle to see driver reports from the last 30 days.</p>
         </div>
 
         {availableCars.length === 0 ? (
@@ -475,7 +516,7 @@ export default function AdminPage() {
                             year: "numeric",
                             hour: "2-digit",
                             minute: "2-digit",
-                            timeZone: "Europe/Belgrade",
+                            timeZone: "Europe/Ljubljana",
                           })}
                         </p>
                         <p className="mt-1 text-[10px] font-medium text-cyan-300/80">

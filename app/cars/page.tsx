@@ -1,15 +1,13 @@
 "use client";
 
-import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, CarFront, Check, ImagePlus, Minimize2, Upload, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Camera, CarFront, Check, Upload, X } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "../lib/authFunctions";
 import { AppPage, LoadingScreen, PageHeader } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { CameraCapture } from "@/components/camera-capture";
 
 type Car = {
   id: number;
@@ -18,66 +16,14 @@ type Car = {
   year: number;
 };
 
-const MAX_IMAGE_EDGE = 1600;
-const JPEG_QUALITY = 0.78;
-
-function formatFileSize(bytes: number) {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-async function compressPhoto(file: File): Promise<File> {
-  if (!file.type.startsWith("image/") || typeof createImageBitmap !== "function") {
-    return file;
-  }
-
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const context = canvas.getContext("2d");
-    if (!context) {
-      bitmap.close();
-      return file;
-    }
-
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, width, height);
-    context.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY);
-    });
-
-    if (!blob || blob.size >= file.size) return file;
-    const baseName = file.name.replace(/\.[^/.]+$/, "") || "vehicle-photo";
-    return new File([blob], `${baseName}.jpg`, {
-      type: "image/jpeg",
-      lastModified: Date.now(),
-    });
-  } catch (error) {
-    console.warn("The browser could not compress this photo; the original will be used.", error);
-    return file;
-  }
-}
-
 export default function CarsPage() {
   const [userId, setUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [cars, setCars] = useState<Car[]>([]);
   const [selectedCar, setSelectedCar] = useState<number | null>(null);
   const [photos, setPhotos] = useState<File[]>([]);
-  const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [compressing, setCompressing] = useState(false);
-  const [originalTotalBytes, setOriginalTotalBytes] = useState(0);
-  const previewUrlsRef = useRef<string[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -88,8 +34,13 @@ export default function CarsPage() {
         supabase.from("cars").select("id, name, plate, year").order("name"),
       ]);
 
+      const profileResult = user
+        ? await supabase.from("drivers").select("role").eq("id", user.id).maybeSingle()
+        : { data: null };
+
       if (!active) return;
       setUserId(user?.id ?? null);
+      setIsAdmin(profileResult.data?.role === "admin");
       if (carsResult.error) {
         console.error("Could not load vehicles:", carsResult.error);
       }
@@ -103,93 +54,69 @@ export default function CarsPage() {
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      previewUrlsRef.current.forEach((preview) => URL.revokeObjectURL(preview));
-    };
-  }, []);
-
   const selectedCarDetails = useMemo(
     () => cars.find((car) => car.id === selectedCar) ?? null,
     [cars, selectedCar]
   );
 
   const resetPhotos = () => {
-    previewUrlsRef.current.forEach((preview) => URL.revokeObjectURL(preview));
-    previewUrlsRef.current = [];
     setPhotos([]);
-    setPhotoPreviews([]);
-    setOriginalTotalBytes(0);
   };
 
   const handleCarSelect = (carId: number) => {
+    if (isAdmin) return;
     setSelectedCar(carId);
     resetPhotos();
   };
 
   const closeUpload = () => {
-    if (uploading || compressing) return;
+    if (uploading) return;
     resetPhotos();
     setSelectedCar(null);
   };
 
-  const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(event.target.files ?? []);
-    if (selectedFiles.length > 8) {
-      alert("You can upload up to 8 photos in one report. The first 8 were selected.");
-    }
-
-    const acceptedFiles = selectedFiles.slice(0, 8);
-    event.target.value = "";
-    if (acceptedFiles.length === 0) return;
-
-    setCompressing(true);
-    setOriginalTotalBytes(acceptedFiles.reduce((total, file) => total + file.size, 0));
-    const optimizedFiles: File[] = [];
-    for (const file of acceptedFiles) {
-      optimizedFiles.push(await compressPhoto(file));
-    }
-
-    previewUrlsRef.current.forEach((preview) => URL.revokeObjectURL(preview));
-    const nextPreviews = optimizedFiles.map((file) => URL.createObjectURL(file));
-    previewUrlsRef.current = nextPreviews;
-    setPhotos(optimizedFiles);
-    setPhotoPreviews(nextPreviews);
-    setCompressing(false);
-  };
-
   const handleSavePhotos = async () => {
-    if (!selectedCar || !userId || photos.length === 0) return;
+    if (!selectedCar || !userId || photos.length < 6 || photos.length > 8) return;
 
     setUploading(true);
     const uploadedPaths: string[] = [];
+    const reportId = crypto.randomUUID();
     try {
-      const uploadedUrls: string[] = [];
+      const { error: draftError } = await supabase.from("car_reports").insert({
+        id: reportId,
+        car_id: selectedCar,
+        driver_id: userId,
+        status: "draft",
+      });
+      if (draftError) throw draftError;
 
       for (const photo of photos) {
-        const fileExtension = photo.name.split(".").pop() || "jpg";
-        const fileName = `${selectedCar}-${crypto.randomUUID()}.${fileExtension}`;
-        const filePath = `cars/${selectedCar}/${fileName}`;
+        const filePath = `${userId}/${reportId}/${crypto.randomUUID()}.jpg`;
         const { error: uploadError } = await supabase.storage
           .from("car-photos")
-          .upload(filePath, photo, { contentType: photo.type || undefined });
+          .upload(filePath, photo, {
+            contentType: "image/jpeg",
+            cacheControl: "3600",
+            upsert: false,
+          });
 
         if (uploadError) throw uploadError;
-
-        const { data } = supabase.storage.from("car-photos").getPublicUrl(filePath);
-        uploadedUrls.push(data.publicUrl);
         uploadedPaths.push(filePath);
       }
 
-      const { error } = await supabase.from("car_photos").insert(
-        uploadedUrls.map((photoUrl) => ({
-          car_id: selectedCar,
-          driver_id: userId,
-          photo_url: photoUrl,
-        }))
-      );
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Your session expired. Please sign in again.");
+      const response = await fetch("/api/car-reports", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ reportId, paths: uploadedPaths }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || "The report could not be finalized");
 
-      if (error) throw error;
       resetPhotos();
       setSelectedCar(null);
       alert("Photo report uploaded successfully.");
@@ -202,22 +129,13 @@ export default function CarsPage() {
           console.error("Could not clean up an incomplete photo upload:", cleanupError);
         }
       }
+      await supabase.from("car_reports").delete().eq("id", reportId).eq("status", "draft");
       const message = error instanceof Error ? error.message : "The photos could not be uploaded";
       alert(`Error: ${message}`);
     } finally {
       setUploading(false);
     }
   };
-
-  const removePhoto = (index: number) => {
-    const removedPreview = previewUrlsRef.current[index];
-    if (removedPreview) URL.revokeObjectURL(removedPreview);
-    previewUrlsRef.current = previewUrlsRef.current.filter((_, photoIndex) => photoIndex !== index);
-    setPhotos((current) => current.filter((_, photoIndex) => photoIndex !== index));
-    setPhotoPreviews((current) => current.filter((_, photoIndex) => photoIndex !== index));
-  };
-
-  const optimizedTotalBytes = photos.reduce((total, photo) => total + photo.size, 0);
 
   if (loading) return <LoadingScreen label="Loading vehicles..." />;
 
@@ -226,7 +144,7 @@ export default function CarsPage() {
       <PageHeader
         eyebrow="Fleet reports"
         title="Vehicles"
-        description="Choose a vehicle and upload a clear photo report."
+        description={isAdmin ? "Vehicle photo reports are available in the admin dashboard." : "Choose a vehicle and take a 6-8 photo camera report."}
         icon={CarFront}
       />
 
@@ -242,7 +160,7 @@ export default function CarsPage() {
           {cars.map((car) => {
             const selected = selectedCar === car.id;
             return (
-              <button type="button" key={car.id} onClick={() => handleCarSelect(car.id)} className="text-left">
+              <button type="button" key={car.id} onClick={() => handleCarSelect(car.id)} disabled={isAdmin} className="text-left disabled:cursor-default">
                 <Card
                   className={`h-full border py-0 transition duration-200 ${
                     selected
@@ -306,7 +224,7 @@ export default function CarsPage() {
                   variant="ghost"
                   size="icon"
                   onClick={closeUpload}
-                  disabled={uploading || compressing}
+                  disabled={uploading}
                   aria-label="Close photo upload"
                   className="shrink-0 rounded-xl text-slate-500 hover:bg-white/5 hover:text-white"
                 >
@@ -314,73 +232,18 @@ export default function CarsPage() {
                 </Button>
               </div>
 
-              <div className="rounded-2xl border border-dashed border-white/12 bg-black/10 p-4 text-center sm:p-6">
-                <Label htmlFor="photos" className="flex cursor-pointer flex-col items-center">
-                  <span className="flex size-12 items-center justify-center rounded-2xl bg-white/5 text-slate-400">
-                    {compressing ? <Minimize2 className="animate-pulse" size={23} /> : <ImagePlus size={23} />}
-                  </span>
-                  <span className="mt-3 text-sm font-medium text-white">
-                    {compressing ? "Optimizing photos..." : "Choose vehicle photos"}
-                  </span>
-                  <span className="mt-1 text-xs text-slate-600">
-                    Up to 8 images · automatically compressed before upload
-                  </span>
-                </Label>
-                <Input
-                  id="photos"
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  disabled={compressing || uploading}
-                  onChange={(event) => void handlePhotoUpload(event)}
-                  className="sr-only"
-                />
-              </div>
-
-              {photoPreviews.length > 0 && (
-                <div className="mt-5">
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-xs font-medium text-slate-400">Selected photos</p>
-                    <span className="text-xs text-slate-600">{photoPreviews.length}/8</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                    {photoPreviews.map((preview, index) => (
-                      <div key={preview} className="relative aspect-square overflow-hidden rounded-xl border border-white/8 bg-black/20">
-                        <Image
-                          src={preview}
-                          alt={`Selected photo ${index + 1}`}
-                          fill
-                          sizes="(max-width: 640px) 33vw, 180px"
-                          unoptimized
-                          className="object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removePhoto(index)}
-                          aria-label={`Remove photo ${index + 1}`}
-                          className="absolute right-1.5 top-1.5 flex size-7 items-center justify-center rounded-full bg-black/70 text-white backdrop-blur hover:bg-red-500"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-300/10 bg-emerald-300/[0.045] px-3 py-2 text-[10px]">
-                    <span className="flex items-center gap-1.5 text-emerald-300/80">
-                      <Minimize2 size={12} /> Optimized for mobile upload
-                    </span>
-                    <span className="text-slate-500">
-                      {formatFileSize(originalTotalBytes)} → {formatFileSize(optimizedTotalBytes)}
-                    </span>
-                  </div>
-                </div>
-              )}
+              <CameraCapture
+                files={photos}
+                onChange={setPhotos}
+                disabled={uploading}
+                minimum={6}
+                maximum={8}
+              />
 
               <Button
                 type="button"
                 onClick={handleSavePhotos}
-                disabled={photos.length === 0 || uploading || compressing || !userId}
+                disabled={photos.length < 6 || photos.length > 8 || uploading || !userId}
                 className="mt-5 h-11 w-full rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 font-semibold text-slate-950 hover:from-cyan-300 hover:to-blue-400"
               >
                 {uploading ? (
@@ -388,14 +251,12 @@ export default function CarsPage() {
                     <span className="size-4 animate-spin rounded-full border-2 border-slate-900/30 border-t-slate-900" />
                     Uploading report...
                   </span>
-                ) : compressing ? (
-                  "Optimizing photos..."
-                ) : photos.length === 0 ? (
-                  "Select photos to continue"
+                ) : photos.length < 6 ? (
+                  `Take ${6 - photos.length} more ${6 - photos.length === 1 ? "photo" : "photos"}`
                 ) : (
                   <span className="flex items-center gap-2">
                     <Upload size={17} />
-                    Upload {photos.length} {photos.length === 1 ? "photo" : "photos"}
+                    Upload report with {photos.length} photos
                   </span>
                 )}
               </Button>

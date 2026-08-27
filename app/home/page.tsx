@@ -10,8 +10,11 @@ import {
   CarFront,
   ChevronRight,
   LayoutDashboard,
-  LogOut,
+  MessageCircle,
+  ReceiptText,
+  UserPlus,
   Users,
+  Wrench,
 } from "lucide-react";
 import { signOut, getCurrentUser } from "../lib/authFunctions";
 import { supabase } from "../lib/supabaseClient";
@@ -20,21 +23,33 @@ import { Card, CardContent } from "@/components/ui/card";
 import { NotificationSettings } from "@/components/notification-settings";
 import { AppPage, LoadingScreen } from "@/components/app-shell";
 import { getShiftLabel } from "../lib/schedule";
+import { ProfileMenu } from "@/components/profile-menu";
 
 type DashboardStats = {
   drivers: number;
   vehicles: number;
   photos: number;
+  receipts: number;
 };
 
 type VehicleAssignment = {
   work_date: string;
   shift_type: string | null;
-  cars: { name: string; plate: string } | null;
+  kind: "shift" | "bled";
+  car: { name: string; plate: string };
 };
 
-type VehicleAssignmentResult = Omit<VehicleAssignment, "cars"> & {
-  cars: VehicleAssignment["cars"] | Array<NonNullable<VehicleAssignment["cars"]>>;
+type VehicleAssignmentResult = {
+  work_date: string;
+  shift_type: string | null;
+  shift_car:
+    | { name: string; plate: string }
+    | Array<{ name: string; plate: string }>
+    | null;
+  bled_car:
+    | { name: string; plate: string }
+    | Array<{ name: string; plate: string }>
+    | null;
 };
 
 type ActionCardProps = {
@@ -83,7 +98,7 @@ export default function HomePage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [displayName, setDisplayName] = useState("Driver");
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<DashboardStats>({ drivers: 0, vehicles: 0, photos: 0 });
+  const [stats, setStats] = useState<DashboardStats>({ drivers: 0, vehicles: 0, photos: 0, receipts: 0 });
   const [nextAssignment, setNextAssignment] = useState<VehicleAssignment | null>(null);
 
   useEffect(() => {
@@ -109,10 +124,15 @@ export default function HomePage() {
       setDisplayName(data?.full_name || user.email?.split("@")[0] || "Driver");
 
       if (admin) {
-        const [driversResult, vehiclesResult, photosResult] = await Promise.all([
-          supabase.from("drivers").select("id", { count: "exact", head: true }).neq("role", "admin"),
+        const [driversResult, vehiclesResult, photosResult, receiptsResult] = await Promise.all([
+          supabase
+            .from("drivers")
+            .select("id", { count: "exact", head: true })
+            .neq("role", "admin")
+            .eq("active", true),
           supabase.from("cars").select("id", { count: "exact", head: true }),
           supabase.from("car_photos").select("id", { count: "exact", head: true }),
+          supabase.from("receipts").select("id", { count: "exact", head: true }),
         ]);
 
         if (!active) return;
@@ -120,30 +140,53 @@ export default function HomePage() {
           drivers: driversResult.count ?? 0,
           vehicles: vehiclesResult.count ?? 0,
           photos: photosResult.count ?? 0,
+          receipts: receiptsResult.count ?? 0,
         });
       } else {
-        const { data: assignment, error: assignmentError } = await supabase
+        const { data: assignmentRows, error: assignmentError } = await supabase
           .from("work_schedule")
-          .select("work_date, shift_type, cars(name, plate)")
+          .select(`
+            work_date,
+            shift_type,
+            shift_car:cars!work_schedule_car_id_fkey(name, plate),
+            bled_car:cars!work_schedule_bled_car_id_fkey(name, plate)
+          `)
           .eq("driver_id", user.id)
-          .not("car_id", "is", null)
           .gte("work_date", format(new Date(), "yyyy-MM-dd"))
           .order("work_date", { ascending: true })
-          .limit(1)
-          .maybeSingle();
+          .limit(14);
 
         if (!assignmentError && active) {
-          const loadedAssignment = assignment as unknown as VehicleAssignmentResult | null;
-          setNextAssignment(
-            loadedAssignment
-              ? {
-                  ...loadedAssignment,
-                  cars: Array.isArray(loadedAssignment.cars)
-                    ? loadedAssignment.cars[0] ?? null
-                    : loadedAssignment.cars,
-                }
-              : null
-          );
+          const assignments: VehicleAssignment[] = [];
+          for (const row of (assignmentRows ?? []) as unknown as VehicleAssignmentResult[]) {
+            const shiftCar = Array.isArray(row.shift_car) ? row.shift_car[0] ?? null : row.shift_car;
+            const bledCar = Array.isArray(row.bled_car) ? row.bled_car[0] ?? null : row.bled_car;
+
+            if (shiftCar) {
+              assignments.push({
+                work_date: row.work_date,
+                shift_type: row.shift_type,
+                kind: "shift",
+                car: shiftCar,
+              });
+            }
+            if (bledCar) {
+              assignments.push({
+                work_date: row.work_date,
+                shift_type: row.shift_type,
+                kind: "bled",
+                car: bledCar,
+              });
+            }
+          }
+
+          assignments.sort((first, second) => {
+            const dateComparison = first.work_date.localeCompare(second.work_date);
+            if (dateComparison !== 0) return dateComparison;
+            if (first.kind === second.kind) return 0;
+            return first.kind === "shift" ? -1 : 1;
+          });
+          setNextAssignment(assignments[0] ?? null);
         }
       }
 
@@ -193,6 +236,34 @@ export default function HomePage() {
           tone: "border-amber-300/15 bg-amber-300/10 text-amber-300",
           href: "/scheduleall",
         },
+        {
+          title: "Receipts",
+          description: "Review cash ride and fuel receipts",
+          icon: ReceiptText,
+          tone: "border-rose-300/15 bg-rose-300/10 text-rose-300",
+          href: "/receipts",
+        },
+        {
+          title: "Driver accounts",
+          description: "Add, deactivate or restore driver access",
+          icon: UserPlus,
+          tone: "border-blue-300/15 bg-blue-300/10 text-blue-300",
+          href: "/admin/drivers",
+        },
+        {
+          title: "Vehicle service",
+          description: "Add vehicles and record service history",
+          icon: Wrench,
+          tone: "border-orange-300/15 bg-orange-300/10 text-orange-300",
+          href: "/services",
+        },
+        {
+          title: "Group chat",
+          description: "Message the team and tag drivers or admins",
+          icon: MessageCircle,
+          tone: "border-teal-300/15 bg-teal-300/10 text-teal-300",
+          href: "/chat",
+        },
       ]
     : [
         {
@@ -210,17 +281,31 @@ export default function HomePage() {
           href: "/schedule",
         },
         {
-          title: "Announcements",
-          description: "Read important updates from your administrator",
+          title: "Notifications",
+          description: "View assignments and important team updates",
           icon: Bell,
           tone: "border-violet-300/15 bg-violet-300/10 text-violet-300",
           href: "/notifications",
+        },
+        {
+          title: "Receipts",
+          description: "Send a cash ride or fuel receipt",
+          icon: ReceiptText,
+          tone: "border-amber-300/15 bg-amber-300/10 text-amber-300",
+          href: "/receipts",
+        },
+        {
+          title: "Group chat",
+          description: "Message the team and tag drivers or admins",
+          icon: MessageCircle,
+          tone: "border-teal-300/15 bg-teal-300/10 text-teal-300",
+          href: "/chat",
         },
       ];
 
   return (
     <AppPage>
-      <header className="relative overflow-hidden rounded-3xl border border-white/8 bg-gradient-to-br from-white/[0.065] to-white/[0.02] p-5 sm:p-7">
+      <header className="relative overflow-visible rounded-3xl border border-white/8 bg-gradient-to-br from-white/[0.065] to-white/[0.02] p-5 sm:p-7">
         <div className="pointer-events-none absolute -right-16 -top-20 size-56 rounded-full bg-cyan-300/10 blur-3xl" />
         <div className="relative flex items-center justify-between gap-4">
           <div>
@@ -234,23 +319,22 @@ export default function HomePage() {
               {isAdmin ? "Your fleet overview at a glance." : "Everything you need for today’s shift."}
             </p>
           </div>
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-200/15 bg-cyan-300/10 text-sm font-bold uppercase text-cyan-200">
-            {displayName.charAt(0)}
-          </div>
+          <ProfileMenu displayName={displayName} onSignOut={handleLogout} />
         </div>
       </header>
 
       {isAdmin && (
         <section>
-          <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-4">
             <StatCard label="Drivers" value={stats.drivers} icon={Users} />
             <StatCard label="Vehicles" value={stats.vehicles} icon={CarFront} />
             <StatCard label="Photos" value={stats.photos} icon={Camera} />
+            <StatCard label="Receipts" value={stats.receipts} icon={ReceiptText} />
           </div>
         </section>
       )}
 
-      {!isAdmin && nextAssignment?.cars && (
+      {!isAdmin && nextAssignment && (
         <section className="relative overflow-hidden rounded-3xl border border-emerald-300/15 bg-gradient-to-br from-emerald-300/[0.08] to-cyan-300/[0.035] p-4 sm:p-5">
           <div className="pointer-events-none absolute -right-10 -top-12 size-36 rounded-full bg-emerald-300/10 blur-3xl" />
           <div className="relative flex items-center gap-3.5">
@@ -259,16 +343,16 @@ export default function HomePage() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300/70">
-                Next assigned vehicle
+                {nextAssignment.kind === "bled" ? "Next Bled vehicle" : "Next assigned vehicle"}
               </p>
               <p className="mt-1 truncate font-semibold text-white">
-                {nextAssignment.cars.name} · {nextAssignment.cars.plate}
+                {nextAssignment.car.name} · {nextAssignment.car.plate}
               </p>
               <p className="mt-0.5 text-xs text-slate-400">
                 {isToday(new Date(`${nextAssignment.work_date}T12:00:00`))
                   ? "Today"
                   : format(new Date(`${nextAssignment.work_date}T12:00:00`), "EEEE, MMM d")}
-                {" · "}{getShiftLabel(nextAssignment.shift_type)}
+                {" · "}{nextAssignment.kind === "bled" ? "Bled" : getShiftLabel(nextAssignment.shift_type, nextAssignment.work_date)}
               </p>
             </div>
             <Button
@@ -292,7 +376,7 @@ export default function HomePage() {
             <p className="mt-0.5 text-xs text-slate-500">Open the tools you use most.</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className={`grid grid-cols-2 gap-3 ${isAdmin ? "sm:grid-cols-3 lg:grid-cols-4" : "sm:grid-cols-3 lg:grid-cols-5"}`}>
           {actions.map((action) => (
             <ActionCard
               key={action.href}
@@ -307,16 +391,6 @@ export default function HomePage() {
       </section>
 
       <NotificationSettings />
-
-      <Button
-        type="button"
-        onClick={handleLogout}
-        variant="outline"
-        className="h-11 w-full rounded-xl border-white/10 bg-white/[0.02] text-slate-400 hover:bg-white/[0.05] hover:text-white"
-      >
-        <LogOut size={17} className="mr-1" />
-        Sign out
-      </Button>
 
       <p className="text-center text-[11px] text-slate-700">
         ROTRG Taxi · {new Date().getFullYear()}

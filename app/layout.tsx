@@ -1,7 +1,7 @@
 "use client";
 
 import { Inter } from "next/font/google";
-import { Home, Car, CalendarDays, Bell, LayoutDashboard } from "lucide-react";
+import { Home, Car, CalendarDays, Bell, LayoutDashboard, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import SWRegister from './sw-register';
@@ -11,6 +11,8 @@ import { supabase } from "./lib/supabaseClient";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
+
+const accessibilityInitializationScript = `(function(){try{var d=document.documentElement;var s=JSON.parse(localStorage.getItem('rotrg-accessibility-v1')||'{}');var z=['normal','large','extra-large'].indexOf(s.textSize)>=0?s.textSize:'normal';d.dataset.textSize=z;d.dataset.easyReading=String(s.easyReading===true);d.dataset.highContrast=String(s.highContrast===true);d.dataset.reduceMotion=String(s.reduceMotion===true)}catch(e){}})()`;
 
 export default function RootLayout({
   children,
@@ -31,11 +33,19 @@ export default function RootLayout({
       if (roleUserIdRef.current === userId) return;
       const { data } = await supabase
         .from("drivers")
-        .select("role")
+        .select("role, active")
         .eq("id", userId)
         .maybeSingle();
 
       if (!isActive) return;
+      if (!data || data.active === false) {
+        await supabase.auth.signOut();
+        if (!isActive) return;
+        setIsLoggedIn(false);
+        setIsAdmin(false);
+        roleUserIdRef.current = null;
+        return;
+      }
       roleUserIdRef.current = userId;
       setIsAdmin(data?.role === "admin");
     };
@@ -96,6 +106,7 @@ export default function RootLayout({
     navItems = [
       { name: "Home", href: "/home", icon: Home },
       { name: "Vehicles", href: "/cars", icon: Car },
+      { name: "Chat", href: "/chat", icon: MessageCircle },
       { name: "Alerts", href: "/notifications", icon: Bell },
       { name: "Admin", href: "/admin", icon: LayoutDashboard },
     ];
@@ -104,6 +115,7 @@ export default function RootLayout({
       { name: "Home", href: "/home", icon: Home },
       { name: "Vehicles", href: "/cars", icon: Car },
       { name: "Schedule", href: "/schedule", icon: CalendarDays },
+      { name: "Chat", href: "/chat", icon: MessageCircle },
       { name: "Alerts", href: "/notifications", icon: Bell },
     ];
   }
@@ -115,7 +127,10 @@ export default function RootLayout({
 
   if (loading || isRedirecting) {
     return (
-      <html lang="en" className={inter.className}>
+      <html lang="en" className={inter.className} suppressHydrationWarning>
+        <head>
+          <script dangerouslySetInnerHTML={{ __html: accessibilityInitializationScript }} />
+        </head>
         <body>
           <div className="min-h-screen flex items-center justify-center">
             <div className="flex items-center gap-3 text-sm text-slate-400">
@@ -129,7 +144,10 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en" className={inter.className}>
+    <html lang="en" className={inter.className} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: accessibilityInitializationScript }} />
+      </head>
       <body>
         <SWRegister />
         <main className={isLoginPage ? "pb-0" : "pb-24"}>{children}</main>
@@ -146,7 +164,7 @@ export default function RootLayout({
                   <Link
                     key={item.name}
                     href={item.href}
-                    className={`relative flex min-w-16 flex-col items-center gap-0.5 rounded-xl px-2 py-2 text-[10px] transition-all duration-200 ${
+                    className={`relative flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-2 text-[10px] transition-all duration-200 ${
                       isActive 
                         ? "bg-cyan-300/10 text-cyan-300" 
                         : "text-slate-500 hover:bg-white/5 hover:text-slate-300"

@@ -1,16 +1,50 @@
 export type ShiftChoice = "07:00" | "15:30" | "whole_day" | "other";
 export type ShiftBucket = ShiftChoice;
 
-export const SHIFT_CHOICES: Array<{
+type ShiftChoiceOption = {
   value: ShiftChoice;
   label: string;
   description: string;
-}> = [
-  { value: "07:00", label: "7:00", description: "Morning start" },
-  { value: "15:30", label: "15:30", description: "Afternoon start" },
+};
+
+export const SHIFT_CHOICES: ShiftChoiceOption[] = [
+  { value: "07:00", label: "Morning", description: "Morning shift" },
+  { value: "15:30", label: "Afternoon", description: "Afternoon start" },
   { value: "whole_day", label: "Whole day", description: "Available all day" },
   { value: "other", label: "Other", description: "Set a custom range" },
 ];
+
+function isWeekend(workDate?: string | Date) {
+  if (!workDate) return false;
+
+  const date = typeof workDate === "string"
+    ? new Date(`${workDate}T12:00:00Z`)
+    : workDate;
+  const day = typeof workDate === "string" ? date.getUTCDay() : date.getDay();
+  return day === 0 || day === 6;
+}
+
+export function getShiftChoices(workDate: string | Date): ShiftChoiceOption[] {
+  const weekend = isWeekend(workDate);
+
+  return SHIFT_CHOICES.map((choice) => {
+    if (choice.value === "07:00") {
+      return {
+        ...choice,
+        label: weekend ? "7:00–15:30" : "6:00–14:45",
+      };
+    }
+
+    if (choice.value === "15:30") {
+      return {
+        ...choice,
+        label: weekend ? "15:30" : "14:45",
+      };
+    }
+
+    return choice;
+  });
+}
 
 const LEGACY_LABELS: Record<string, string> = {
   first: "First shift (legacy)",
@@ -40,14 +74,18 @@ export function getShiftBucket(value: string | null | undefined): ShiftBucket | 
   return null;
 }
 
-export function getShiftLabel(value: string | null | undefined) {
+export function getShiftLabel(value: string | null | undefined, workDate?: string | Date) {
   if (!value) return "Not set";
 
   const custom = parseCustomShift(value);
   if (custom) return `${custom.start}–${custom.end}`;
 
-  if (value === "07:00") return "7:00";
-  if (value === "15:30") return "15:30";
+  if (value === "07:00" || value === "first") {
+    return isWeekend(workDate) ? "7:00–15:30" : "6:00–14:45";
+  }
+  if (value === "15:30" || value === "second") {
+    return isWeekend(workDate) ? "15:30" : "14:45";
+  }
   if (value === "whole_day") return "Whole day";
   if (value === "other") return "Custom time";
 
