@@ -2,7 +2,8 @@
 
 import { addDays, format, isToday } from "date-fns";
 import { CarFront, CheckCircle2, Clock3, LoaderCircle, MapPin, UserRound } from "lucide-react";
-import { getShiftBucket, getShiftLabel, type ShiftBucket } from "@/app/lib/schedule";
+import { getShiftBucket, getShiftChoices, getShiftLabel, type ShiftBucket } from "@/app/lib/schedule";
+import type { AssignmentKind } from "@/app/lib/vehicleAssignment";
 
 export type ScheduleDriver = {
   id: string;
@@ -22,6 +23,7 @@ export type AdminScheduleEntry = {
   work_date: string;
   shift_type: string | null;
   car_id: number | null;
+  bled_car_id: number | null;
   bled: boolean;
 };
 
@@ -33,8 +35,8 @@ type AdminScheduleBoardProps = {
   cars: ScheduleCar[];
   schedules: AdminScheduleEntry[];
   loading?: boolean;
-  savingScheduleId?: number | null;
-  onAssignCar: (scheduleId: number, carId: number | null) => void;
+  savingAssignmentKey?: string | null;
+  onAssignCar: (scheduleId: number, carId: number | null, assignmentKind: AssignmentKind) => void;
 };
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -91,7 +93,7 @@ export function AdminScheduleBoard({
   cars,
   schedules,
   loading = false,
-  savingScheduleId = null,
+  savingAssignmentKey = null,
   onAssignCar,
 }: AdminScheduleBoardProps) {
   const weekDays = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
@@ -101,6 +103,7 @@ export function AdminScheduleBoard({
     schedule.work_date === selectedDate && (getShiftBucket(schedule.shift_type) || schedule.bled)
   );
   const driverById = new Map(drivers.map((driver) => [driver.id, driver]));
+  const selectedDayChoices = getShiftChoices(selectedDate);
 
   return (
     <div className="space-y-4">
@@ -151,6 +154,10 @@ export function AdminScheduleBoard({
 
       <div className={`grid gap-3 lg:grid-cols-2 2xl:grid-cols-3 ${loading ? "pointer-events-none opacity-55" : ""}`}>
         {SCHEDULE_GROUPS.map((group) => {
+          const datedChoice = group.value === "bled"
+            ? null
+            : selectedDayChoices.find((choice) => choice.value === group.value);
+          const groupLabel = datedChoice?.label ?? group.label;
           const groupSchedules = selectedSchedules
             .filter((schedule) =>
               group.value === "bled"
@@ -169,7 +176,7 @@ export function AdminScheduleBoard({
                 <div className="flex items-center gap-2.5">
                   <span className={`mt-1 size-2 rounded-full ${group.dot}`} />
                   <div>
-                    <h3 className="text-sm font-semibold text-white">{group.label}</h3>
+                    <h3 className="text-sm font-semibold text-white">{groupLabel}</h3>
                     <p className="text-[10px] text-slate-600">{group.description}</p>
                   </div>
                 </div>
@@ -187,9 +194,14 @@ export function AdminScheduleBoard({
                 <div className="space-y-2">
                   {groupSchedules.map((schedule) => {
                     const driver = driverById.get(schedule.driver_id);
-                    const assignedCar = cars.find((car) => car.id === schedule.car_id);
-                    const saving = savingScheduleId === schedule.id;
-                    const assignmentBusy = savingScheduleId !== null;
+                    const assignmentKind: AssignmentKind = group.value === "bled" ? "bled" : "shift";
+                    const assignedCarId = assignmentKind === "bled"
+                      ? schedule.bled_car_id
+                      : schedule.car_id;
+                    const assignedCar = cars.find((car) => car.id === assignedCarId);
+                    const assignmentKey = `${schedule.id}:${assignmentKind}`;
+                    const saving = savingAssignmentKey === assignmentKey;
+                    const assignmentBusy = savingAssignmentKey !== null;
 
                     return (
                       <div key={schedule.id} className="rounded-xl border border-white/7 bg-[#090f18]/65 p-3">
@@ -209,42 +221,42 @@ export function AdminScheduleBoard({
                               ) : (
                                 <CheckCircle2 size={10} />
                               )}
-                              {group.value === "bled" ? "Available for Bled" : getShiftLabel(schedule.shift_type)}
+                              {group.value === "bled" ? "Available for Bled" : getShiftLabel(schedule.shift_type, schedule.work_date)}
                             </div>
                           </div>
                         </div>
 
-                        {group.value !== "bled" && (
-                          <>
-                            <label className="mt-2.5 block">
-                              <span className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-slate-600">
-                                <CarFront size={10} /> Assigned vehicle
-                              </span>
-                              <select
-                                value={schedule.car_id ?? ""}
-                                disabled={assignmentBusy}
-                                onChange={(event) => {
-                                  const value = event.target.value;
-                                  onAssignCar(schedule.id, value ? Number(value) : null);
-                                }}
-                                className="h-9 w-full rounded-xl border border-white/10 bg-[#0c1420] px-2.5 text-[11px] text-slate-300 outline-none transition focus:border-cyan-300/30 disabled:cursor-wait disabled:opacity-50"
-                              >
-                                <option value="">No vehicle assigned</option>
-                                {cars.map((car) => (
-                                  <option key={car.id} value={car.id}>
-                                    {car.name} · {car.plate}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
+                        <label className="mt-2.5 block">
+                          <span className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-slate-600">
+                            <CarFront size={10} /> {assignmentKind === "bled" ? "Bled vehicle" : "Assigned vehicle"}
+                          </span>
+                          <select
+                            value={assignedCarId ?? ""}
+                            disabled={assignmentBusy}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              onAssignCar(
+                                schedule.id,
+                                value ? Number(value) : null,
+                                assignmentKind
+                              );
+                            }}
+                            className="h-9 w-full rounded-xl border border-white/10 bg-[#0c1420] px-2.5 text-[11px] text-slate-300 outline-none transition focus:border-cyan-300/30 disabled:cursor-wait disabled:opacity-50"
+                          >
+                            <option value="">No vehicle assigned</option>
+                            {cars.map((car) => (
+                              <option key={car.id} value={car.id}>
+                                {car.name} · {car.plate}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
 
-                            {saving && <p className="mt-1 text-[9px] text-cyan-300">Saving assignment...</p>}
-                            {!saving && assignedCar && (
-                              <p className="mt-1 truncate text-[9px] text-emerald-300/70">
-                                Assigned: {assignedCar.name} · {assignedCar.plate}
-                              </p>
-                            )}
-                          </>
+                        {saving && <p className="mt-1 text-[9px] text-cyan-300">Saving and notifying driver...</p>}
+                        {!saving && assignedCar && (
+                          <p className="mt-1 truncate text-[9px] text-emerald-300/70">
+                            Assigned: {assignedCar.name} · {assignedCar.plate}
+                          </p>
                         )}
                       </div>
                     );

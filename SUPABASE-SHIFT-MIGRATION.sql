@@ -1,3 +1,5 @@
+-- LEGACY MIGRATION: do not run for the current release.
+-- Use SUPABASE-COMPLETE-UPGRADE.sql instead.
 -- Run this once in Supabase SQL Editor if work_schedule.shift_type currently
 -- uses an enum or an old CHECK constraint. Existing values remain valid.
 

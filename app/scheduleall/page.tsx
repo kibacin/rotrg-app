@@ -9,6 +9,10 @@ import { getCurrentUser } from "../lib/authFunctions";
 import { AppPage, LoadingScreen, PageHeader } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import {
+  saveVehicleAssignment,
+  type AssignmentKind,
+} from "../lib/vehicleAssignment";
+import {
   AdminScheduleBoard,
   type AdminScheduleEntry,
   type ScheduleCar,
@@ -25,7 +29,7 @@ export default function ScheduleAllPage() {
   const [authorized, setAuthorized] = useState(false);
   const [currentWeekStart, setCurrentWeekStart] = useState(new Date());
   const [selectedDayIndex, setSelectedDayIndex] = useState(() => (new Date().getDay() + 6) % 7);
-  const [savingScheduleId, setSavingScheduleId] = useState<number | null>(null);
+  const [savingAssignmentKey, setSavingAssignmentKey] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -39,11 +43,11 @@ export default function ScheduleAllPage() {
 
       const { data: profile } = await supabase
         .from("drivers")
-        .select("role")
+        .select("role, active")
         .eq("id", user.id)
         .single();
 
-      if (profile?.role !== "admin") {
+      if (profile?.role !== "admin" || profile.active === false) {
         router.replace("/home");
         return;
       }
@@ -53,6 +57,7 @@ export default function ScheduleAllPage() {
           .from("drivers")
           .select("id, email, full_name")
           .neq("role", "admin")
+          .eq("active", true)
           .order("full_name"),
         supabase.from("cars").select("id, name, plate").order("name"),
       ]);
@@ -80,7 +85,7 @@ export default function ScheduleAllPage() {
       const end = addDays(start, 6);
       const { data, error } = await supabase
         .from("work_schedule")
-        .select("id, driver_id, work_date, shift_type, car_id, bled")
+        .select("id, driver_id, work_date, shift_type, car_id, bled_car_id, bled")
         .gte("work_date", format(start, "yyyy-MM-dd"))
         .lte("work_date", format(end, "yyyy-MM-dd"));
 
@@ -97,23 +102,32 @@ export default function ScheduleAllPage() {
     };
   }, [authorized, currentWeekStart]);
 
-  const assignCar = async (scheduleId: number, carId: number | null) => {
-    setSavingScheduleId(scheduleId);
+  const assignCar = async (
+    scheduleId: number,
+    carId: number | null,
+    assignmentKind: AssignmentKind
+  ) => {
+    const assignmentKey = `${scheduleId}:${assignmentKind}`;
+    const assignmentColumn = assignmentKind === "bled" ? "bled_car_id" : "car_id";
+    setSavingAssignmentKey(assignmentKey);
     const previousSchedules = schedules;
     setSchedules((current) =>
-      current.map((schedule) => schedule.id === scheduleId ? { ...schedule, car_id: carId } : schedule)
+      current.map((schedule) =>
+        schedule.id === scheduleId
+          ? { ...schedule, [assignmentColumn]: carId }
+          : schedule
+      )
     );
 
-    const { error } = await supabase
-      .from("work_schedule")
-      .update({ car_id: carId })
-      .eq("id", scheduleId);
-
-    if (error) {
+    try {
+      await saveVehicleAssignment(scheduleId, carId, assignmentKind);
+    } catch (error) {
       setSchedules(previousSchedules);
-      alert(`Vehicle assignment could not be saved: ${error.message}`);
+      const message = error instanceof Error ? error.message : "Vehicle assignment could not be saved";
+      alert(`Error: ${message}`);
+    } finally {
+      setSavingAssignmentKey(null);
     }
-    setSavingScheduleId(null);
   };
 
   const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
@@ -182,8 +196,10 @@ export default function ScheduleAllPage() {
         cars={cars}
         schedules={schedules}
         loading={scheduleLoading}
-        savingScheduleId={savingScheduleId}
-        onAssignCar={(scheduleId, carId) => void assignCar(scheduleId, carId)}
+        savingAssignmentKey={savingAssignmentKey}
+        onAssignCar={(scheduleId, carId, assignmentKind) =>
+          void assignCar(scheduleId, carId, assignmentKind)
+        }
       />
     </AppPage>
   );
