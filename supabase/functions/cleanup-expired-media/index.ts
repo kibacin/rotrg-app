@@ -1,13 +1,34 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
-const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const configuredAdminApiKey = Deno.env.get("ROTRG_ADMIN_API_KEY");
+const legacyServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const secretKeysJson = Deno.env.get("SUPABASE_SECRET_KEYS");
 
-if (!supabaseUrl || !serviceRoleKey) {
+function getAdminApiKey() {
+  if (configuredAdminApiKey) return configuredAdminApiKey;
+
+  if (secretKeysJson) {
+    try {
+      const secretKeys = JSON.parse(secretKeysJson);
+      if (typeof secretKeys?.default === "string" && secretKeys.default) {
+        return secretKeys.default;
+      }
+    } catch {
+      // Older projects may not provide the new secret-key dictionary.
+    }
+  }
+
+  return legacyServiceRoleKey;
+}
+
+const adminApiKey = getAdminApiKey();
+
+if (!supabaseUrl || !adminApiKey) {
   throw new Error("Supabase function environment is not configured");
 }
 
-const supabase = createClient(supabaseUrl, serviceRoleKey, {
+const supabase = createClient(supabaseUrl, adminApiKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
@@ -27,6 +48,26 @@ function carPhotoPath(photoUrl: string | null) {
     return decodeURIComponent(photoUrl.slice(markerIndex + marker.length));
   } catch {
     return photoUrl.slice(markerIndex + marker.length);
+  }
+}
+
+function isServiceRoleRequest(request: Request) {
+  const authorization = request.headers.get("authorization")?.trim() ?? "";
+  const [scheme, token] = authorization.split(/\s+/, 2);
+  if (scheme?.toLowerCase() !== "bearer" || !token) return false;
+
+  try {
+    const payloadSegment = token.split(".")[1];
+    if (!payloadSegment) return false;
+
+    const normalized = payloadSegment.replace(/-/g, "+").replace(/_/g, "/");
+    const padding = "=".repeat((4 - normalized.length % 4) % 4);
+    const claims = JSON.parse(atob(normalized + padding));
+
+    // Supabase's Edge gateway verifies the JWT before this handler runs.
+    return claims?.role === "service_role";
+  } catch {
+    return false;
   }
 }
 
@@ -181,7 +222,7 @@ Deno.serve(async (request) => {
     });
   }
 
-  if (request.headers.get("authorization") !== `Bearer ${serviceRoleKey}`) {
+  if (!isServiceRoleRequest(request)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { "content-type": "application/json" },
