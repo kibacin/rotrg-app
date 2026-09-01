@@ -1,8 +1,17 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Camera, CameraOff, Check, RefreshCcw, RotateCcw, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Camera,
+  CameraOff,
+  Check,
+  LoaderCircle,
+  Play,
+  RefreshCcw,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type CameraCaptureProps = {
@@ -13,6 +22,32 @@ type CameraCaptureProps = {
   maximum?: number;
 };
 
+const CAMERA_OPEN_TIMEOUT_MS = 15_000;
+const CAMERA_PREVIEW_TIMEOUT_MS = 8_000;
+
+function stopStream(stream: MediaStream | null) {
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
+function cameraOpenErrorMessage(error: unknown) {
+  const errorName = error instanceof DOMException ? error.name : "";
+
+  if (errorName === "NotAllowedError" || errorName === "SecurityError") {
+    return "Camera access is blocked. Allow camera permission for this app in your phone settings, then try again.";
+  }
+  if (errorName === "NotFoundError" || errorName === "OverconstrainedError") {
+    return "A usable camera could not be found on this device.";
+  }
+  if (errorName === "NotReadableError" || errorName === "AbortError") {
+    return "The camera is busy. Close any other app using it, wait a moment, then try again.";
+  }
+  if (errorName === "TimeoutError") {
+    return "The camera took too long to open. Close any other app using it, then try again.";
+  }
+
+  return "The camera could not open. Check camera permission and try again.";
+}
+
 export function CameraCapture({
   files,
   onChange,
@@ -22,18 +57,40 @@ export function CameraCapture({
 }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraRequestRef = useRef(0);
+  const playAttemptRef = useRef<Promise<void> | null>(null);
+  const previewTimeoutRef = useRef<number | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraOpening, setCameraOpening] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+  const [needsPlaybackTap, setNeedsPlaybackTap] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [capturing, setCapturing] = useState(false);
 
-  const stopCamera = () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+  const clearPreviewTimeout = useCallback(() => {
+    if (previewTimeoutRef.current !== null) {
+      window.clearTimeout(previewTimeoutRef.current);
+      previewTimeoutRef.current = null;
+    }
+  }, []);
+
+  const releaseCurrentStream = useCallback(() => {
+    clearPreviewTimeout();
+    playAttemptRef.current = null;
+    const stream = streamRef.current;
     streamRef.current = null;
+    stopStream(stream);
     if (videoRef.current) videoRef.current.srcObject = null;
     setCameraActive(false);
     setCameraReady(false);
-  };
+    setNeedsPlaybackTap(false);
+  }, [clearPreviewTimeout]);
+
+  const stopCamera = useCallback(() => {
+    cameraRequestRef.current += 1;
+    setCameraOpening(false);
+    releaseCurrentStream();
+  }, [releaseCurrentStream]);
 
   const previews = useMemo(
     () => files.map((file) => URL.createObjectURL(file)),
@@ -45,52 +102,176 @@ export function CameraCapture({
     [previews]
   );
 
+  const startPreview = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || !video.srcObject) return;
+
+    if (!video.paused && video.videoWidth > 0 && video.videoHeight > 0) {
+      clearPreviewTimeout();
+      setCameraReady(true);
+      setNeedsPlaybackTap(false);
+      setCameraError("");
+      return;
+    }
+
+    if (playAttemptRef.current) {
+      await playAttemptRef.current;
+      return;
+    }
+
+    const playAttempt = video
+      .play()
+      .then(() => {
+        clearPreviewTimeout();
+        setCameraReady(video.videoWidth > 0 && video.videoHeight > 0);
+        setNeedsPlaybackTap(false);
+        setCameraError("");
+      })
+      .catch((error: unknown) => {
+        const errorName = error instanceof DOMException ? error.name : "";
+        if (errorName === "AbortError") return;
+
+        console.error("Camera preview could not start:", error);
+        setNeedsPlaybackTap(true);
+        if (errorName !== "NotAllowedError") {
+          setCameraError("The camera is open, but its preview is paused. Tap Start preview or restart the camera.");
+        }
+      });
+
+    playAttemptRef.current = playAttempt;
+    try {
+      await playAttempt;
+    } finally {
+      if (playAttemptRef.current === playAttempt) {
+        playAttemptRef.current = null;
+      }
+    }
+  }, [clearPreviewTimeout]);
+
   useEffect(() => {
     if (!cameraActive || !videoRef.current || !streamRef.current) return;
 
     const video = videoRef.current;
     const stream = streamRef.current;
+    const handlePlayable = () => void startPreview();
+    const handlePlaying = () => {
+      clearPreviewTimeout();
+      setCameraReady(video.videoWidth > 0 && video.videoHeight > 0);
+      setNeedsPlaybackTap(false);
+      setCameraError("");
+    };
+    const handleTrackEnded = () => {
+      if (streamRef.current !== stream) return;
+      setCameraReady(false);
+      setCameraError("The camera stopped. Tap restart to open it again.");
+    };
+
+    video.muted = true;
+    video.playsInline = true;
+    video.addEventListener("loadedmetadata", handlePlayable);
+    video.addEventListener("canplay", handlePlayable);
+    video.addEventListener("playing", handlePlaying);
+    stream.getVideoTracks().forEach((track) => track.addEventListener("ended", handleTrackEnded));
     video.srcObject = stream;
-    void video.play().catch((error) => {
-      console.error("Camera preview could not start:", error);
-      setCameraError("The camera opened, but its preview could not start. Close it and try again.");
-    });
+
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      void startPreview();
+    }
+
+    previewTimeoutRef.current = window.setTimeout(() => {
+      if (video.paused || !video.videoWidth || !video.videoHeight) {
+        setNeedsPlaybackTap(true);
+      }
+    }, CAMERA_PREVIEW_TIMEOUT_MS);
 
     return () => {
+      clearPreviewTimeout();
+      playAttemptRef.current = null;
+      video.removeEventListener("loadedmetadata", handlePlayable);
+      video.removeEventListener("canplay", handlePlayable);
+      video.removeEventListener("playing", handlePlaying);
+      stream.getVideoTracks().forEach((track) => track.removeEventListener("ended", handleTrackEnded));
       if (video.srcObject === stream) video.srcObject = null;
     };
-  }, [cameraActive]);
+  }, [cameraActive, clearPreviewTimeout, startPreview]);
+
+  useEffect(() => {
+    const releaseWhenHidden = () => {
+      if (document.visibilityState === "hidden" && streamRef.current) stopCamera();
+    };
+
+    document.addEventListener("visibilitychange", releaseWhenHidden);
+    window.addEventListener("pagehide", stopCamera);
+    return () => {
+      document.removeEventListener("visibilitychange", releaseWhenHidden);
+      window.removeEventListener("pagehide", stopCamera);
+    };
+  }, [stopCamera]);
 
   useEffect(() => () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraRequestRef.current += 1;
+    clearPreviewTimeout();
+    stopStream(streamRef.current);
     streamRef.current = null;
-  }, []);
+  }, [clearPreviewTimeout]);
 
   const startCamera = async () => {
-    if (disabled || files.length >= maximum) return;
+    if (disabled || files.length >= maximum || cameraOpening) return;
+
+    releaseCurrentStream();
     setCameraError("");
-    stopCamera();
+    setCameraOpening(true);
+    const requestId = cameraRequestRef.current + 1;
+    cameraRequestRef.current = requestId;
 
     if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraOpening(false);
       setCameraError("This device does not provide camera access inside the app.");
       return;
     }
 
+    let timeoutId: number | null = null;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const mediaRequest = navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
         },
+      }).then((stream) => {
+        if (cameraRequestRef.current !== requestId) {
+          stopStream(stream);
+          throw new DOMException("The camera request was replaced", "AbortError");
+        }
+        return stream;
       });
+
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(new DOMException("The camera took too long to open", "TimeoutError"));
+        }, CAMERA_OPEN_TIMEOUT_MS);
+      });
+
+      const stream = await Promise.race([mediaRequest, timeout]);
+      if (cameraRequestRef.current !== requestId) {
+        stopStream(stream);
+        return;
+      }
+
       streamRef.current = stream;
+      setCameraOpening(false);
       setCameraActive(true);
     } catch (error) {
-      console.error("Camera permission failed:", error);
-      setCameraError("Camera access was blocked. Allow camera permission in your browser settings and try again.");
-      stopCamera();
+      if (cameraRequestRef.current !== requestId) return;
+      cameraRequestRef.current += 1;
+      console.error("Camera opening failed:", error);
+      setCameraOpening(false);
+      releaseCurrentStream();
+      setCameraError(cameraOpenErrorMessage(error));
+    } finally {
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     }
   };
 
@@ -146,9 +327,24 @@ export function CameraCapture({
               autoPlay
               muted
               playsInline
-              onLoadedMetadata={() => setCameraReady(true)}
               className="h-full w-full object-cover"
             />
+            {!cameraReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/55 p-5 text-center backdrop-blur-[2px]">
+                {needsPlaybackTap ? (
+                  <div>
+                    <p className="text-sm font-medium text-white">Camera is open. Start the preview.</p>
+                    <Button type="button" onClick={() => void startPreview()} className="mt-3 h-10 rounded-xl bg-cyan-300 font-semibold text-slate-950 hover:bg-cyan-200">
+                      <Play size={16} /> Start preview
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-slate-300">
+                    <LoaderCircle size={18} className="animate-spin text-cyan-300" /> Starting preview...
+                  </div>
+                )}
+              </div>
+            )}
             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/65 to-transparent p-3">
               <span className="rounded-full bg-black/45 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur">
                 Camera only · {files.length}/{maximum}
@@ -160,16 +356,25 @@ export function CameraCapture({
               )}
             </div>
             <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-3 bg-gradient-to-t from-black/75 to-transparent p-4 pt-12">
-              <Button type="button" variant="ghost" size="icon" onClick={stopCamera} disabled={disabled} aria-label="Close camera" className="size-11 rounded-full bg-black/55 text-white hover:bg-black/75">
+              <Button type="button" variant="ghost" size="icon" onClick={() => stopCamera()} disabled={disabled} aria-label="Close camera" className="size-11 rounded-full bg-black/55 text-white hover:bg-black/75">
                 <CameraOff size={19} />
               </Button>
               <button type="button" onClick={() => void capture()} disabled={!cameraReady || capturing || disabled || files.length >= maximum} aria-label="Take photo" className="flex size-18 items-center justify-center rounded-full border-4 border-white bg-white/20 shadow-xl transition active:scale-95 disabled:opacity-50">
                 <span className="size-14 rounded-full bg-white" />
               </button>
-              <Button type="button" variant="ghost" size="icon" onClick={() => void startCamera()} disabled={disabled} aria-label="Restart camera" className="size-11 rounded-full bg-black/55 text-white hover:bg-black/75">
+              <Button type="button" variant="ghost" size="icon" onClick={() => void startCamera()} disabled={disabled || cameraOpening} aria-label="Restart camera" className="size-11 rounded-full bg-black/55 text-white hover:bg-black/75">
                 <RefreshCcw size={18} />
               </Button>
             </div>
+          </div>
+        ) : cameraOpening ? (
+          <div className="flex min-h-56 flex-col items-center justify-center p-6 text-center">
+            <LoaderCircle size={30} className="animate-spin text-cyan-300" />
+            <p className="mt-4 text-sm font-semibold text-white">Opening camera...</p>
+            <p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">Allow camera access if your phone asks for permission.</p>
+            <Button type="button" variant="outline" onClick={() => stopCamera()} className="mt-4 h-10 rounded-xl border-white/10 bg-white/[0.03] text-slate-300">
+              Cancel
+            </Button>
           </div>
         ) : (
           <div className="flex min-h-56 flex-col items-center justify-center p-6 text-center">
@@ -200,7 +405,7 @@ export function CameraCapture({
         )}
       </div>
 
-      {files.length > 0 && files.length < maximum && !cameraActive && (
+      {files.length > 0 && files.length < maximum && !cameraActive && !cameraOpening && (
         <Button type="button" variant="outline" onClick={() => void startCamera()} disabled={disabled} className="h-10 w-full rounded-xl border-white/10 bg-white/[0.03] text-slate-300"><RotateCcw size={15} /> Take another photo</Button>
       )}
     </div>

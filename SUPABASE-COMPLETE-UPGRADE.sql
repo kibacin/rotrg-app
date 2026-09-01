@@ -13,11 +13,17 @@ create extension if not exists pgcrypto;
 alter table public.drivers
   add column if not exists active boolean;
 
+alter table public.drivers
+  add column if not exists chat_notifications_muted boolean;
+
 update public.drivers set active = true where active is null;
+update public.drivers set chat_notifications_muted = false where chat_notifications_muted is null;
 
 alter table public.drivers
   alter column active set default true,
-  alter column active set not null;
+  alter column active set not null,
+  alter column chat_notifications_muted set default false,
+  alter column chat_notifications_muted set not null;
 
 create or replace function public.current_user_is_active()
 returns boolean
@@ -283,7 +289,7 @@ before insert or update or delete on public.work_schedule
 for each row execute function public.enforce_driver_schedule_deadline();
 
 -- ---------------------------------------------------------------------------
--- Personal notifications (vehicle, schedule and chat mentions)
+-- Personal notifications (vehicle, schedule and group chat messages)
 -- ---------------------------------------------------------------------------
 
 create table if not exists public.user_notifications (
@@ -318,7 +324,7 @@ end $$;
 
 alter table public.user_notifications
   add constraint user_notifications_kind_check
-  check (kind in ('vehicle_assignment', 'schedule_change', 'chat_mention'));
+  check (kind in ('vehicle_assignment', 'schedule_change', 'chat_mention', 'chat_message'));
 
 create index if not exists user_notifications_user_created_at_idx
   on public.user_notifications(user_id, created_at desc);
@@ -584,13 +590,13 @@ create unique index if not exists car_photos_storage_path_unique
 
 alter table public.car_reports enable row level security;
 drop policy if exists "Drivers can create own draft reports" on public.car_reports;
-create policy "Drivers can create own draft reports"
+drop policy if exists "Active users can create own draft reports" on public.car_reports;
+create policy "Active users can create own draft reports"
   on public.car_reports for insert to authenticated
   with check (
     driver_id = (select auth.uid())
     and status = 'draft'
     and public.current_user_is_active()
-    and not public.current_user_is_admin()
   );
 drop policy if exists "Users can view permitted car reports" on public.car_reports;
 create policy "Users can view permitted car reports"
@@ -661,7 +667,8 @@ $$;
 grant execute on function public.is_own_draft_car_report_path(text) to authenticated;
 
 drop policy if exists "Drivers can upload camera report photos" on storage.objects;
-create policy "Drivers can upload camera report photos"
+drop policy if exists "Active users can upload camera report photos" on storage.objects;
+create policy "Active users can upload camera report photos"
   on storage.objects for insert to authenticated
   with check (
     bucket_id = 'car-photos'
@@ -737,7 +744,7 @@ revoke all on function public.finalize_car_report(uuid, uuid, text[], text[]) fr
 grant execute on function public.finalize_car_report(uuid, uuid, text[], text[]) to service_role;
 
 -- ---------------------------------------------------------------------------
--- Driver receipts, retained for 30 days
+-- User receipts, retained for 30 days
 -- ---------------------------------------------------------------------------
 
 create table if not exists public.receipts (
@@ -761,12 +768,12 @@ create index if not exists receipts_type_created_at_idx
 
 alter table public.receipts enable row level security;
 drop policy if exists "Drivers can upload own receipts" on public.receipts;
-create policy "Drivers can upload own receipts"
+drop policy if exists "Active users can upload own receipts" on public.receipts;
+create policy "Active users can upload own receipts"
   on public.receipts for insert to authenticated
   with check (
     driver_id = (select auth.uid())
     and public.current_user_is_active()
-    and not public.current_user_is_admin()
   );
 drop policy if exists "Drivers can view own receipts" on public.receipts;
 create policy "Drivers can view own receipts"
@@ -792,13 +799,13 @@ set public = excluded.public,
     allowed_mime_types = excluded.allowed_mime_types;
 
 drop policy if exists "Drivers can upload own receipt images" on storage.objects;
-create policy "Drivers can upload own receipt images"
+drop policy if exists "Active users can upload own receipt images" on storage.objects;
+create policy "Active users can upload own receipt images"
   on storage.objects for insert to authenticated
   with check (
     bucket_id = 'receipts'
     and (storage.foldername(name))[1] = (select auth.uid())::text
     and public.current_user_is_active()
-    and not public.current_user_is_admin()
   );
 drop policy if exists "Drivers can view own receipt images" on storage.objects;
 create policy "Drivers can view own receipt images"

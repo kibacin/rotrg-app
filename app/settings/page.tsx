@@ -87,7 +87,7 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="Your device"
         title="Settings"
-        description="Make the app easier to read and use. These choices stay on this device."
+        description="Adjust reading support and choose which chat alerts you receive."
         icon={Settings2}
       />
 

@@ -270,7 +270,7 @@ export default function ReceiptsPage() {
   };
 
   const handleUpload = async () => {
-    if (!userId || !photo || isAdmin) return;
+    if (!userId || !photo) return;
 
     setUploading(true);
     let storagePath: string | null = null;
@@ -302,7 +302,7 @@ export default function ReceiptsPage() {
       if (receiptError) throw receiptError;
 
       resetPhoto();
-      await loadReceipts(userId, false);
+      await loadReceipts(userId, isAdmin);
       alert("Receipt uploaded successfully.");
     } catch (error) {
       if (storagePath) {
@@ -347,15 +347,14 @@ export default function ReceiptsPage() {
         title="Receipts"
         description={
           isAdmin
-            ? "Review every cash ride and fuel receipt submitted by drivers."
+            ? "Submit cash ride or fuel receipts and review every team submission."
             : "Send a cash ride or fuel receipt to the administrator."
         }
         icon={ReceiptText}
       />
 
-      {!isAdmin && (
-        <Card className="border border-cyan-300/12 bg-gradient-to-br from-cyan-300/[0.055] to-white/[0.025] py-0">
-          <CardContent className="p-4 sm:p-6">
+      <Card className="border border-cyan-300/12 bg-gradient-to-br from-cyan-300/[0.055] to-white/[0.025] py-0">
+        <CardContent className="p-4 sm:p-6">
             <div className="grid grid-cols-2 gap-2.5">
               {([
                 { value: "cash_ride" as const, label: "Cash ride", description: "Money ride receipt", icon: Banknote },
@@ -483,9 +482,8 @@ export default function ReceiptsPage() {
                 </span>
               )}
             </Button>
-          </CardContent>
-        </Card>
-      )}
+        </CardContent>
+      </Card>
 
       {isAdmin && (
         <Card className="border border-white/8 bg-white/[0.03] py-0">
