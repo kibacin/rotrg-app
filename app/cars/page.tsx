@@ -64,7 +64,6 @@ export default function CarsPage() {
   };
 
   const handleCarSelect = (carId: number) => {
-    if (isAdmin) return;
     setSelectedCar(carId);
     resetPhotos();
   };
@@ -144,7 +143,9 @@ export default function CarsPage() {
       <PageHeader
         eyebrow="Fleet reports"
         title="Vehicles"
-        description={isAdmin ? "Vehicle photo reports are available in the admin dashboard." : "Choose a vehicle and take a 6-8 photo camera report."}
+        description={isAdmin
+          ? "Choose a vehicle to submit a 6-8 photo report, or review reports in the admin dashboard."
+          : "Choose a vehicle and take a 6-8 photo camera report."}
         icon={CarFront}
       />
 
@@ -160,7 +161,7 @@ export default function CarsPage() {
           {cars.map((car) => {
             const selected = selectedCar === car.id;
             return (
-              <button type="button" key={car.id} onClick={() => handleCarSelect(car.id)} disabled={isAdmin} className="text-left disabled:cursor-default">
+              <button type="button" key={car.id} onClick={() => handleCarSelect(car.id)} className="text-left">
                 <Card
                   className={`h-full border py-0 transition duration-200 ${
                     selected

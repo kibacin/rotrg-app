@@ -7,6 +7,10 @@ select
   ) as active_drivers_ready,
   exists (
     select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'drivers' and column_name = 'chat_notifications_muted'
+  ) as chat_notification_mute_ready,
+  exists (
+    select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'work_schedule' and column_name = 'bled_car_id'
   ) as bled_vehicle_ready,
   to_regclass('public.schedule_activity') is not null as schedule_activity_ready,

@@ -12,10 +12,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: authentication.error }, { status: 401 });
     }
 
-    if (authentication.profile.role === "admin") {
-      return NextResponse.json({ error: "Only drivers can submit vehicle photo reports" }, { status: 403 });
-    }
-
     const payload = await request.json();
     const reportId = typeof payload?.reportId === "string" ? payload.reportId : "";
     const paths = Array.isArray(payload?.paths)
@@ -87,4 +83,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "The vehicle report could not be saved" }, { status: 500 });
   }
 }
-

@@ -40,18 +40,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let mentionIds: string[] = [];
-    if (requestedMentionIds.length) {
-      const { data: validMentions, error: mentionsError } = await authentication.supabaseAdmin
-        .from("drivers")
-        .select("id")
-        .in("id", requestedMentionIds)
-        .eq("active", true);
-      if (mentionsError) throw mentionsError;
-      mentionIds = (validMentions ?? [])
-        .map((item) => item.id)
-        .filter((id) => id !== authentication.user!.id);
-    }
+    const { data: activeRecipients, error: recipientsError } = await authentication.supabaseAdmin
+      .from("drivers")
+      .select("id, chat_notifications_muted")
+      .eq("active", true)
+      .neq("id", authentication.user.id);
+    if (recipientsError) throw recipientsError;
+
+    const activeRecipientIds = new Set((activeRecipients ?? []).map((recipient) => recipient.id));
+    const mentionIds = requestedMentionIds.filter((id) => activeRecipientIds.has(id));
+    const notificationRecipientIds = new Set(
+      (activeRecipients ?? [])
+        .filter((recipient) => recipient.chat_notifications_muted !== true)
+        .map((recipient) => recipient.id)
+    );
+    const mentionedNotificationIds = mentionIds.filter((id) => notificationRecipientIds.has(id));
+    const mentionedNotificationIdSet = new Set(mentionedNotificationIds);
+    const regularNotificationIds = Array.from(notificationRecipientIds)
+      .filter((id) => !mentionedNotificationIdSet.has(id));
 
     const { data: message, error: messageError } = await authentication.supabaseAdmin
       .from("chat_messages")
@@ -73,34 +79,64 @@ export async function POST(request: NextRequest) {
         await authentication.supabaseAdmin.from("chat_messages").delete().eq("id", message.id);
         throw mentionRowsError;
       }
+    }
 
-      const title = `${authentication.profile.full_name || "A team member"} mentioned you`;
+    if (notificationRecipientIds.size) {
+      const senderName = authentication.profile.full_name?.trim() || "A team member";
+      const mentionTitle = `${senderName} mentioned you`;
+      const messageTitle = `New message from ${senderName}`;
       const notificationBody = body.length > 140 ? `${body.slice(0, 137)}...` : body;
-      const { error: notificationError } = await authentication.supabaseAdmin
-        .from("user_notifications")
-        .insert(mentionIds.map((userId) => ({
+      const notificationRows = [
+        ...mentionedNotificationIds.map((userId) => ({
           user_id: userId,
           kind: "chat_mention",
-          title,
+          title: mentionTitle,
           body: notificationBody,
           url: "/chat",
           metadata: { message_id: message.id },
-        })));
+        })),
+        ...regularNotificationIds.map((userId) => ({
+          user_id: userId,
+          kind: "chat_message",
+          title: messageTitle,
+          body: notificationBody,
+          url: "/chat",
+          metadata: { message_id: message.id },
+        })),
+      ];
+
+      const { error: notificationError } = await authentication.supabaseAdmin
+        .from("user_notifications")
+        .insert(notificationRows);
       if (notificationError) {
-        console.error("Could not save chat mention notifications:", notificationError);
+        console.error("Could not save chat message notifications:", notificationError);
       }
 
-      try {
-        await sendNotificationToUsers(
-          mentionIds,
-          title,
-          notificationBody,
-          "/chat",
-          `chat-mention-${message.id}`
-        );
-      } catch (pushError) {
-        console.error("Could not send chat mention push:", pushError);
-      }
+      const pushResults = await Promise.allSettled([
+        ...(mentionedNotificationIds.length
+          ? [sendNotificationToUsers(
+              mentionedNotificationIds,
+              mentionTitle,
+              notificationBody,
+              "/chat",
+              `chat-message-${message.id}`
+            )]
+          : []),
+        ...(regularNotificationIds.length
+          ? [sendNotificationToUsers(
+              regularNotificationIds,
+              messageTitle,
+              notificationBody,
+              "/chat",
+              `chat-message-${message.id}`
+            )]
+          : []),
+      ]);
+      pushResults.forEach((result) => {
+        if (result.status === "rejected") {
+          console.error("Could not send chat message push:", result.reason);
+        }
+      });
     }
 
     return NextResponse.json({ success: true, message });
@@ -150,4 +186,3 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "The message could not be removed" }, { status: 500 });
   }
 }
-

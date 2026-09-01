@@ -39,7 +39,7 @@ type AnnouncementQueryRow = Omit<Announcement, "drivers" | "images"> & {
 
 type PersonalNotification = {
   id: string;
-  kind: "vehicle_assignment" | "schedule_change" | "chat_mention";
+  kind: "vehicle_assignment" | "schedule_change" | "chat_mention" | "chat_message";
   title: string;
   body: string;
   url: string;
@@ -86,6 +86,7 @@ async function getAnnouncements() {
 function NotificationIcon({ kind }: { kind: PersonalNotification["kind"] }) {
   if (kind === "schedule_change") return <CalendarDays size={19} />;
   if (kind === "chat_mention") return <AtSign size={19} />;
+  if (kind === "chat_message") return <Bell size={19} />;
   return <CarFront size={19} />;
 }
 
@@ -237,13 +238,13 @@ export default function NotificationsPage() {
       <PageHeader
         eyebrow="Team updates"
         title={isAdmin ? "Announcements & activity" : "Notifications"}
-        description={isAdmin ? "Schedule activity, mentions and announcements for every driver." : "Assignments, mentions and important team updates."}
+        description={isAdmin ? "Schedule activity, chat messages and announcements for every driver." : "Assignments, chat messages and important team updates."}
         icon={Bell}
       />
 
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <div><h2 className="font-semibold text-white">For you</h2><p className="mt-0.5 text-xs text-slate-500">{isAdmin ? "Driver schedule changes and chat mentions." : "Vehicle assignments and chat mentions."}</p></div>
+          <div><h2 className="font-semibold text-white">For you</h2><p className="mt-0.5 text-xs text-slate-500">{isAdmin ? "Driver schedule changes and group chat messages." : "Vehicle assignments and group chat messages."}</p></div>
           <span className="rounded-full border border-white/8 bg-white/[0.03] px-2.5 py-1 text-xs text-slate-500">{personalNotifications.length}</span>
         </div>
         {personalNotifications.length === 0 ? (
