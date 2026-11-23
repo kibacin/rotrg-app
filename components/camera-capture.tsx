@@ -1,7 +1,6 @@
 "use client";
 
-import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Camera,
   CameraOff,
@@ -13,10 +12,12 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { frameToJpeg, getFrameSource } from "@/app/lib/cameraFrame";
 
 type CameraCaptureProps = {
   files: File[];
   onChange: (files: File[]) => void;
+  onBusyChange?: (busy: boolean) => void;
   disabled?: boolean;
   minimum?: number;
   maximum?: number;
@@ -27,6 +28,18 @@ const CAMERA_PREVIEW_TIMEOUT_MS = 8_000;
 
 function stopStream(stream: MediaStream | null) {
   stream?.getTracks().forEach((track) => track.stop());
+}
+
+function PreviewPhoto({ file, index }: { file: File; index: number }) {
+  // One URL per mounted File; adding photo eight must not decode photos one to seven again.
+  const attach = useCallback((image: HTMLImageElement | null) => {
+    if (!image) return;
+    const url = URL.createObjectURL(file);
+    image.src = url;
+    return () => { image.removeAttribute("src"); URL.revokeObjectURL(url); };
+  }, [file]);
+  // eslint-disable-next-line @next/next/no-img-element -- this is a local camera blob, never a network image
+  return <img ref={attach} alt={`Captured vehicle photo ${index + 1}`} className="absolute inset-0 h-full w-full object-cover" />;
 }
 
 function cameraOpenErrorMessage(error: unknown) {
@@ -51,6 +64,7 @@ function cameraOpenErrorMessage(error: unknown) {
 export function CameraCapture({
   files,
   onChange,
+  onBusyChange,
   disabled = false,
   minimum = 6,
   maximum = 8,
@@ -58,14 +72,23 @@ export function CameraCapture({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cameraRequestRef = useRef(0);
+  const openingRef = useRef(false);
+  const captureLock = useRef(false);
   const playAttemptRef = useRef<Promise<void> | null>(null);
   const previewTimeoutRef = useRef<number | null>(null);
-  const [cameraActive, setCameraActive] = useState(false);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
+  const cameraActive = activeStream !== null;
+  const [android] = useState(() => typeof navigator !== "undefined" && /android/i.test(navigator.userAgent));
+  const singleShotSupported = android && getFrameSource() !== null;
   const [cameraOpening, setCameraOpening] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [needsPlaybackTap, setNeedsPlaybackTap] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [capturing, setCapturing] = useState(false);
+  useEffect(() => {
+    onBusyChange?.(cameraOpening || capturing);
+    return () => onBusyChange?.(false);
+  }, [cameraOpening, capturing, onBusyChange]);
 
   const clearPreviewTimeout = useCallback(() => {
     if (previewTimeoutRef.current !== null) {
@@ -81,30 +104,22 @@ export function CameraCapture({
     streamRef.current = null;
     stopStream(stream);
     if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraActive(false);
+    setActiveStream(null);
     setCameraReady(false);
     setNeedsPlaybackTap(false);
   }, [clearPreviewTimeout]);
 
   const stopCamera = useCallback(() => {
     cameraRequestRef.current += 1;
+    openingRef.current = false;
     setCameraOpening(false);
     releaseCurrentStream();
   }, [releaseCurrentStream]);
 
-  const previews = useMemo(
-    () => files.map((file) => URL.createObjectURL(file)),
-    [files]
-  );
-
-  useEffect(
-    () => () => previews.forEach((url) => URL.revokeObjectURL(url)),
-    [previews]
-  );
-
   const startPreview = useCallback(async () => {
     const video = videoRef.current;
-    if (!video || !video.srcObject) return;
+    const stream = streamRef.current;
+    if (!video || !stream || video.srcObject !== stream) return;
 
     if (!video.paused && video.videoWidth > 0 && video.videoHeight > 0) {
       clearPreviewTimeout();
@@ -122,12 +137,14 @@ export function CameraCapture({
     const playAttempt = video
       .play()
       .then(() => {
+        if (streamRef.current !== stream || video.srcObject !== stream) return;
         clearPreviewTimeout();
         setCameraReady(video.videoWidth > 0 && video.videoHeight > 0);
         setNeedsPlaybackTap(false);
         setCameraError("");
       })
       .catch((error: unknown) => {
+        if (streamRef.current !== stream || video.srcObject !== stream) return;
         const errorName = error instanceof DOMException ? error.name : "";
         if (errorName === "AbortError") return;
 
@@ -149,16 +166,24 @@ export function CameraCapture({
   }, [clearPreviewTimeout]);
 
   useEffect(() => {
-    if (!cameraActive || !videoRef.current || !streamRef.current) return;
+    if (!activeStream || !videoRef.current) return;
 
     const video = videoRef.current;
-    const stream = streamRef.current;
+    const stream = activeStream;
     const handlePlayable = () => void startPreview();
     const handlePlaying = () => {
+      if (streamRef.current !== stream) return;
       clearPreviewTimeout();
       setCameraReady(video.videoWidth > 0 && video.videoHeight > 0);
       setNeedsPlaybackTap(false);
       setCameraError("");
+    };
+    const handleVideoError = () => {
+      if (streamRef.current !== stream) return;
+      stopCamera();
+      setCameraError(singleShotSupported
+        ? "Live preview stopped. Aim at the vehicle and use Take photo without preview."
+        : "Live preview stopped. Close other camera apps, then reopen the camera.");
     };
     const handleTrackEnded = () => {
       if (streamRef.current !== stream) return;
@@ -171,8 +196,9 @@ export function CameraCapture({
     video.addEventListener("loadedmetadata", handlePlayable);
     video.addEventListener("canplay", handlePlayable);
     video.addEventListener("playing", handlePlaying);
+    video.addEventListener("error", handleVideoError);
     stream.getVideoTracks().forEach((track) => track.addEventListener("ended", handleTrackEnded));
-    video.srcObject = stream;
+    try { video.srcObject = stream; } catch { handleVideoError(); }
 
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
       void startPreview();
@@ -190,10 +216,11 @@ export function CameraCapture({
       video.removeEventListener("loadedmetadata", handlePlayable);
       video.removeEventListener("canplay", handlePlayable);
       video.removeEventListener("playing", handlePlaying);
+      video.removeEventListener("error", handleVideoError);
       stream.getVideoTracks().forEach((track) => track.removeEventListener("ended", handleTrackEnded));
       if (video.srcObject === stream) video.srcObject = null;
     };
-  }, [cameraActive, clearPreviewTimeout, startPreview]);
+  }, [activeStream, clearPreviewTimeout, singleShotSupported, startPreview, stopCamera]);
 
   useEffect(() => {
     const releaseWhenHidden = () => {
@@ -215,9 +242,10 @@ export function CameraCapture({
     streamRef.current = null;
   }, [clearPreviewTimeout]);
 
-  const startCamera = async () => {
-    if (disabled || files.length >= maximum || cameraOpening) return;
+  const startCamera = async (singleShot = false) => {
+    if (disabled || files.length >= maximum || openingRef.current || captureLock.current) return;
 
+    openingRef.current = true;
     releaseCurrentStream();
     setCameraError("");
     setCameraOpening(true);
@@ -225,6 +253,7 @@ export function CameraCapture({
     cameraRequestRef.current = requestId;
 
     if (!navigator.mediaDevices?.getUserMedia) {
+      openingRef.current = false;
       setCameraOpening(false);
       setCameraError("This device does not provide camera access inside the app.");
       return;
@@ -235,11 +264,24 @@ export function CameraCapture({
     try {
       const mediaRequest = navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: {
+        video: android ? {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 960, max: 1280 },
+          height: { ideal: 720, max: 960 },
+          frameRate: { ideal: 15, max: 24 },
+        } : {
           facingMode: "environment",
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
+      }).catch((error: unknown) => {
+        if (!android || cameraRequestRef.current !== requestId || document.hidden ||
+            !(error instanceof DOMException) || error.name !== "OverconstrainedError") throw error;
+        // Some Android cameras offer only a fixed frame rate. Never retry a denied permission.
+        return navigator.mediaDevices.getUserMedia({ audio: false, video: {
+          facingMode: { ideal: "environment" }, width: { ideal: 960 },
+          height: { ideal: 720 }, frameRate: { ideal: 15 },
+        } });
       }).then((stream) => {
         if (cameraRequestRef.current !== requestId) {
           stopStream(stream);
@@ -261,59 +303,67 @@ export function CameraCapture({
       }
 
       streamRef.current = stream;
-      setCameraOpening(false);
-      setCameraActive(true);
+      if (document.hidden) throw new DOMException("App is not visible", "AbortError");
+      if (singleShot) {
+        const Frame = getFrameSource();
+        const track = stream.getVideoTracks()[0];
+        if (!Frame || !track) throw new Error("Live frame capture is unavailable");
+        const grab = new Frame(track).grabFrame().then((frame) => {
+          if (cameraRequestRef.current !== requestId) {
+            frame.close();
+            throw new DOMException("Camera closed", "AbortError");
+          }
+          return frame;
+        });
+        const frame = await Promise.race([grab, timeout]);
+        try {
+          // The bitmap owns its pixels; release the hardware before JPEG encoding.
+          stopStream(stream);
+          if (streamRef.current === stream) streamRef.current = null;
+          const file = await frameToJpeg(frame, frame.width, frame.height, files.length + 1);
+          if (cameraRequestRef.current === requestId && !document.hidden) onChange([...files, file]);
+        } finally { frame.close(); }
+        if (cameraRequestRef.current === requestId) stopCamera();
+      } else {
+        setActiveStream(stream);
+      }
     } catch (error) {
       if (cameraRequestRef.current !== requestId) return;
-      cameraRequestRef.current += 1;
       console.error("Camera opening failed:", error);
-      setCameraOpening(false);
-      releaseCurrentStream();
+      stopCamera();
       setCameraError(cameraOpenErrorMessage(error));
     } finally {
       if (timeoutId !== null) window.clearTimeout(timeoutId);
+      if (cameraRequestRef.current === requestId) {
+        openingRef.current = false;
+        setCameraOpening(false);
+      }
     }
   };
 
   const capture = async () => {
     const video = videoRef.current;
-    if (!video || !cameraReady || files.length >= maximum) return;
+    if (!video || !cameraReady || disabled || captureLock.current || files.length >= maximum) return;
+    const requestId = cameraRequestRef.current;
+    captureLock.current = true;
     setCapturing(true);
 
     try {
-      const sourceWidth = video.videoWidth;
-      const sourceHeight = video.videoHeight;
-      if (!sourceWidth || !sourceHeight) throw new Error("The camera is not ready");
-
-      const scale = Math.min(1, 1600 / Math.max(sourceWidth, sourceHeight));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(sourceWidth * scale));
-      canvas.height = Math.max(1, Math.round(sourceHeight * scale));
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("The photo could not be captured");
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", 0.78)
-      );
-      if (!blob) throw new Error("The photo could not be captured");
-
-      const file = new File([blob], `vehicle-${Date.now()}-${files.length + 1}.jpg`, {
-        type: "image/jpeg",
-        lastModified: Date.now(),
-      });
+      const file = await frameToJpeg(video, video.videoWidth, video.videoHeight, files.length + 1);
+      if (cameraRequestRef.current !== requestId || document.hidden) return;
       const nextFiles = [...files, file];
       onChange(nextFiles);
       if (nextFiles.length >= maximum) stopCamera();
     } catch (error) {
       setCameraError(error instanceof Error ? error.message : "The photo could not be captured");
     } finally {
+      captureLock.current = false;
       setCapturing(false);
     }
   };
 
   const removePhoto = (index: number) => {
-    if (disabled) return;
+    if (disabled || openingRef.current || captureLock.current) return;
     onChange(files.filter((_, photoIndex) => photoIndex !== index));
   };
 
@@ -330,7 +380,7 @@ export function CameraCapture({
               className="h-full w-full object-cover"
             />
             {!cameraReady && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/55 p-5 text-center backdrop-blur-[2px]">
+              <div className="absolute inset-0 flex items-center justify-center bg-black/55 p-5 text-center">
                 {needsPlaybackTap ? (
                   <div>
                     <p className="text-sm font-medium text-white">Camera is open. Start the preview.</p>
@@ -346,7 +396,7 @@ export function CameraCapture({
               </div>
             )}
             <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/65 to-transparent p-3">
-              <span className="rounded-full bg-black/45 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur">
+              <span className="rounded-full bg-black/65 px-2.5 py-1 text-[10px] font-semibold text-white">
                 Camera only · {files.length}/{maximum}
               </span>
               {files.length >= minimum && (
@@ -382,6 +432,14 @@ export function CameraCapture({
             <p className="mt-4 text-sm font-semibold text-white">Take {minimum} required vehicle photos</p>
             <p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">Photos must be taken now. The gallery and file picker are not available in this report.</p>
             <Button type="button" onClick={() => void startCamera()} disabled={disabled || files.length >= maximum} className="mt-4 h-11 rounded-xl bg-cyan-300 font-semibold text-slate-950 hover:bg-cyan-200"><Camera size={17} /> {files.length ? "Continue taking photos" : "Open camera"}</Button>
+            {singleShotSupported && files.length < maximum && (
+              <div className="mt-4 border-t border-white/10 pt-3">
+                <p className="mx-auto max-w-sm text-xs text-slate-400">If live preview closes the app, aim the rear camera at the vehicle, then tap below. Check the photo before taking the next one.</p>
+                <Button type="button" variant="outline" disabled={disabled} onClick={() => void startCamera(true)} className="mt-2 min-h-11">
+                  Take photo without preview
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -390,15 +448,15 @@ export function CameraCapture({
 
       <div>
         <div className="mb-2 flex items-center justify-between"><p className="text-xs font-medium text-slate-400">Captured photos</p><span className={`text-xs font-semibold ${files.length >= minimum ? "text-emerald-300" : "text-amber-300"}`}>{files.length}/{minimum} minimum · {maximum} max</span></div>
-        {previews.length === 0 ? (
+        {files.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-white/8 py-8 text-center text-xs text-slate-600">No photos captured yet.</div>
         ) : (
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {previews.map((preview, index) => (
-              <div key={`${files[index]?.name}-${index}`} className="relative aspect-square overflow-hidden rounded-xl border border-white/8 bg-black/20">
-                <Image src={preview} alt={`Captured vehicle photo ${index + 1}`} fill sizes="(max-width: 640px) 33vw, 160px" unoptimized className="object-cover" />
+            {files.map((file, index) => (
+              <div key={file.name} className="relative aspect-square overflow-hidden rounded-xl border border-white/8 bg-black/20">
+                <PreviewPhoto file={file} index={index} />
                 <span className="absolute bottom-1.5 left-1.5 flex size-6 items-center justify-center rounded-full bg-black/70 text-[10px] font-semibold text-white">{index + 1}</span>
-                <button type="button" onClick={() => removePhoto(index)} disabled={disabled} aria-label={`Remove photo ${index + 1}`} className="absolute right-1.5 top-1.5 flex size-7 items-center justify-center rounded-full bg-black/70 text-white hover:bg-red-500 disabled:opacity-50"><X size={14} /></button>
+                <button type="button" onClick={() => removePhoto(index)} disabled={disabled || cameraOpening || capturing} aria-label={`Remove photo ${index + 1}`} className="absolute right-1.5 top-1.5 flex size-7 items-center justify-center rounded-full bg-black/70 text-white hover:bg-red-500 disabled:opacity-50"><X size={14} /></button>
               </div>
             ))}
           </div>

@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AtSign, MessageCircle, Send, ShieldCheck, Trash2, Users } from "lucide-react";
+import { ArrowDown, AtSign, MessageCircle, Send, ShieldCheck, Trash2, Users } from "lucide-react";
 import { AppPage, LoadingScreen, PageHeader } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -61,30 +61,39 @@ export default function ChatPage() {
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openError, setOpenError] = useState(false);
+  const [openAttempt, setOpenAttempt] = useState(0);
   const [sending, setSending] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [cursorPosition, setCursorPosition] = useState(0);
   const [selectedMentions, setSelectedMentions] = useState<Map<string, ChatUser>>(new Map());
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const followingRef = useRef(true);
+  const [following, setFollowing] = useState(true);
+  const loadVersion = useRef(0);
+  const cancelLoads = useCallback(() => { loadVersion.current += 1; }, []);
+  const readMarker = useRef("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const loadMessages = useCallback(async () => {
+    const version = ++loadVersion.current;
     const { data, error } = await supabase
       .from("chat_messages")
       .select("id, author_id, body, created_at, deleted_at, drivers!chat_messages_author_id_fkey(full_name, role), chat_mentions(mentioned_user_id)")
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(100);
+    if (version !== loadVersion.current) return;
     if (error) throw error;
-    setMessages(((data ?? []) as unknown as MessageQueryRow[]).reverse().map(normalizeMessage));
-  }, []);
-
-  const markRead = useCallback(async (loadedUserId: string) => {
-    const { error } = await supabase.from("chat_reads").upsert({
-      user_id: loadedUserId,
-      last_read_at: new Date().toISOString(),
+    const page = ((data ?? []) as unknown as MessageQueryRow[]).reverse().map(normalizeMessage);
+    const keepPlace = !followingRef.current && page.length === 100;
+    setMessages((previous) => {
+      // Keep the row being read mounted when a new message pushes it out of the 100-row window.
+      if (!keepPlace) return page;
+      const overlap = previous.findIndex((message) => message.id === page[0].id);
+      return overlap > 0 ? [...previous.slice(0, overlap), ...page] : page;
     });
-    if (error) console.error("Could not update chat read state:", error);
   }, []);
 
   useEffect(() => {
@@ -100,6 +109,8 @@ export default function ChatPage() {
         supabase.from("drivers").select("role, active").eq("id", user.id).maybeSingle(),
         supabase.from("drivers").select("id, full_name, role").eq("active", true).order("full_name"),
       ]);
+      if (!active) return;
+      if (profileResult.error) throw profileResult.error;
       if (profileResult.data?.active === false) {
         await supabase.auth.signOut();
         router.replace("/");
@@ -107,7 +118,6 @@ export default function ChatPage() {
       }
       if (usersResult.error) throw usersResult.error;
       await loadMessages();
-      await markRead(user.id);
 
       if (!active) return;
       setUserId(user.id);
@@ -118,30 +128,78 @@ export default function ChatPage() {
 
     void load().catch((error) => {
       console.error("Could not load group chat:", error);
-      if (active) setLoading(false);
+      if (active) { setOpenError(true); setLoading(false); }
     });
-    return () => { active = false; };
-  }, [loadMessages, markRead, router]);
+    return () => { active = false; cancelLoads(); };
+  }, [cancelLoads, loadMessages, openAttempt, router]);
 
   useEffect(() => {
     if (!userId) return;
+    const refresh = () => {
+      void loadMessages().catch((error) => console.error("Could not refresh group chat:", error));
+    };
+    const onVisible = () => { if (!document.hidden) refresh(); };
     const channel = supabase
       .channel("company-chat")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "chat_messages" },
-        () => {
-          void loadMessages().then(() => markRead(userId));
-        }
+        refresh
       )
-      .subscribe();
+      .subscribe((status) => { if (status === "SUBSCRIBED") refresh(); });
 
-    return () => { void supabase.removeChannel(channel); };
-  }, [loadMessages, markRead, userId]);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      void supabase.removeChannel(channel);
+    };
+  }, [loadMessages, userId]);
 
+  const jumpToLatest = () => {
+    followingRef.current = true;
+    setFollowing(true);
+    const list = scrollRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  };
+
+  // The list doesn't exist until loading finishes. Scroll only the chat, before paint.
+  useLayoutEffect(() => {
+    const list = scrollRef.current;
+    if (list && followingRef.current) list.scrollTop = list.scrollHeight;
+  }, [loading, messages]);
+
+  const hasMessages = messages.length > 0;
+  useLayoutEffect(() => {
+    const list = scrollRef.current;
+    if (!list || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (followingRef.current) list.scrollTop = list.scrollHeight;
+    });
+    observer.observe(list);
+    if (list.firstElementChild) observer.observe(list.firstElementChild);
+    return () => observer.disconnect();
+  }, [loading, hasMessages]);
+
+  const newest = messages[messages.length - 1];
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length]);
+    if (loading || !following || !userId || !newest) return;
+    const markVisible = async () => {
+      if (document.hidden || !followingRef.current || readMarker.current === newest.id) return;
+      readMarker.current = newest.id;
+      try {
+        const { error } = await supabase.from("chat_reads").upsert({
+          user_id: userId, last_read_at: newest.created_at,
+        });
+        if (error) throw error;
+      } catch (error) {
+        if (readMarker.current === newest.id) readMarker.current = "";
+        console.error("Could not update chat read state:", error);
+      }
+    };
+    void markVisible();
+    document.addEventListener("visibilitychange", markVisible);
+    return () => document.removeEventListener("visibilitychange", markVisible);
+  }, [following, loading, newest, userId]);
 
   const mentionMatch = useMemo(() => {
     const cursor = Math.min(cursorPosition, draft.length);
@@ -191,8 +249,8 @@ export default function ChatPage() {
       setDraft("");
       setCursorPosition(0);
       setSelectedMentions(new Map());
+      jumpToLatest();
       await loadMessages();
-      if (userId) await markRead(userId);
     } catch (error) {
       alert(error instanceof Error ? error.message : "The message could not be sent");
     } finally {
@@ -221,6 +279,13 @@ export default function ChatPage() {
   };
 
   if (loading) return <LoadingScreen label="Opening company chat..." />;
+  if (openError) return (
+    <AppPage><p role="alert">Could not load the group chat.</p>
+      <Button type="button" onClick={() => {
+        setOpenError(false); setLoading(true); setOpenAttempt((n) => n + 1);
+      }}>Retry chat</Button>
+    </AppPage>
+  );
 
   return (
     <AppPage>
@@ -234,7 +299,15 @@ export default function ChatPage() {
 
       <Card className="overflow-hidden border border-white/8 bg-white/[0.025] py-0">
         <CardContent className="p-0">
-          <div className="h-[min(62vh,620px)] overflow-y-auto px-3 py-4 sm:px-5">
+          <div className="relative">
+          <div ref={scrollRef} role="region" aria-label="Chat messages" tabIndex={0}
+            onScroll={(event) => {
+              const list = event.currentTarget;
+              const nearEnd = list.scrollHeight - list.clientHeight - list.scrollTop <= 48;
+              followingRef.current = nearEnd;
+              setFollowing(nearEnd);
+            }}
+            className="h-[min(62vh,620px)] overflow-y-auto overscroll-contain px-3 py-4 sm:px-5">
             {messages.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center text-center"><MessageCircle size={38} className="mb-3 text-slate-700" /><p className="text-sm text-slate-500">No messages yet. Start the conversation.</p></div>
             ) : (
@@ -255,9 +328,15 @@ export default function ChatPage() {
                     </div>
                   );
                 })}
-                <div ref={bottomRef} />
               </div>
             )}
+          </div>
+          {!following && (
+            <button type="button" onClick={jumpToLatest}
+              className="absolute bottom-3 right-4 z-10 flex min-h-11 items-center gap-1.5 rounded-full border border-cyan-300/30 bg-[#112536] px-4 text-xs font-semibold text-cyan-200 shadow-md">
+              <ArrowDown size={16} aria-hidden="true" /> Jump to latest
+            </button>
+          )}
           </div>
 
           <div className="relative border-t border-white/8 bg-[#090f18]/90 p-3 sm:p-4">

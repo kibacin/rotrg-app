@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { getCurrentUser } from "../lib/authFunctions";
+import { createPhotoWindow, fetchCarPhotos, fetchPhotoCounts, type CarPhoto } from "../lib/vehiclePhotoHistory";
 import { AppPage, LoadingScreen, PageHeader } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -50,17 +51,7 @@ type Car = {
   year?: number;
 };
 
-type CarPhoto = {
-  id: number;
-  car_id: number;
-  driver_id: string;
-  photo_url: string;
-  report_id: string | null;
-  storage_path: string | null;
-  uploaded_at: string;
-  cars: { name: string; plate: string } | null;
-  drivers: { full_name: string; email: string } | null;
-};
+const REPORTS_PER_VIEW = 12;
 
 type PhotoGroup = {
   id: string;
@@ -78,8 +69,7 @@ function groupPhotos(photos: CarPhoto[]): PhotoGroup[] {
   const groups = new Map<string, PhotoGroup>();
 
   for (const photo of photos) {
-    const dateKey = format(new Date(photo.uploaded_at), "yyyy-MM-dd");
-    const key = photo.report_id || `${photo.car_id}-${photo.driver_id}-${dateKey}`;
+    const key = photo.report_id || `${photo.car_id}-${photo.driver_id}-${format(new Date(photo.uploaded_at), "yyyy-MM-dd")}`;
     const existing = groups.get(key);
 
     if (existing) {
@@ -105,7 +95,7 @@ function groupPhotos(photos: CarPhoto[]): PhotoGroup[] {
   );
 }
 
-function StatCard({ label, value, icon: Icon }: { label: string; value: number; icon: typeof Users }) {
+function StatCard({ label, value, icon: Icon }: { label: string; value: number | string; icon: typeof Users }) {
   return (
     <Card className="border border-white/8 bg-white/[0.035] py-0">
       <CardContent className="p-4">
@@ -123,7 +113,13 @@ export default function AdminPage() {
   const router = useRouter();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [cars, setCars] = useState<Car[]>([]);
-  const [photos, setPhotos] = useState<CarPhoto[]>([]);
+  const [photoWindow] = useState(createPhotoWindow);
+  const [counts, setCounts] = useState<Awaited<ReturnType<typeof fetchPhotoCounts>> | null>(null);
+  const [countsError, setCountsError] = useState(false);
+  const [countsAttempt, setCountsAttempt] = useState(0);
+  const [history, setHistory] = useState<{ carId: number; photos: CarPhoto[] | null } | null>(null);
+  const [historyAttempt, setHistoryAttempt] = useState(0);
+  const [visibleReports, setVisibleReports] = useState(REPORTS_PER_VIEW);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [scheduleLoading, setScheduleLoading] = useState(true);
@@ -158,21 +154,15 @@ export default function AdminPage() {
         return;
       }
 
-      const [driversResult, carsResult, photosResult] = await Promise.all([
+      const [driversResult, carsResult] = await Promise.all([
         supabase.from("drivers").select("id, email, full_name, role, active, created_at").order("full_name"),
         supabase.from("cars").select("id, name, plate, year").order("name"),
-        supabase
-          .from("car_photos")
-          .select("id, car_id, driver_id, photo_url, report_id, storage_path, uploaded_at, cars(name, plate), drivers(full_name, email)")
-          .gte("uploaded_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-          .order("uploaded_at", { ascending: false }),
       ]);
 
       if (!active) return;
       const loadedCars = (carsResult.data ?? []) as Car[];
       setDrivers((driversResult.data ?? []) as Driver[]);
       setCars(loadedCars);
-      setPhotos((photosResult.data ?? []) as unknown as CarPhoto[]);
       setSelectedCarId((current) => current ?? loadedCars[0]?.id ?? null);
       setIsAdmin(true);
       setLoading(false);
@@ -183,6 +173,32 @@ export default function AdminPage() {
       active = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const controller = new AbortController();
+    void fetchPhotoCounts(photoWindow, controller.signal).then((result) => {
+      if (!controller.signal.aborted) setCounts(result);
+    }).catch((error) => {
+      if (controller.signal.aborted) return;
+      console.error("Could not load vehicle photo counts:", error);
+      setCountsError(true);
+    });
+    return () => controller.abort();
+  }, [isAdmin, photoWindow, countsAttempt]);
+
+  useEffect(() => {
+    if (!isAdmin || selectedCarId === null) return;
+    const controller = new AbortController();
+    void fetchCarPhotos(selectedCarId, photoWindow, controller.signal).then((photos) => {
+      if (!controller.signal.aborted) setHistory({ carId: selectedCarId, photos });
+    }).catch((error) => {
+      if (controller.signal.aborted) return;
+      console.error("Could not load vehicle photo history:", error);
+      setHistory({ carId: selectedCarId, photos: null });
+    });
+    return () => controller.abort();
+  }, [isAdmin, selectedCarId, photoWindow, historyAttempt]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -215,22 +231,16 @@ export default function AdminPage() {
     () => drivers.filter((driver) => driver.role !== "admin" && driver.active),
     [drivers]
   );
-  const photoGroups = useMemo(() => groupPhotos(photos), [photos]);
   const availableCars = useMemo(() => {
     const result = new Map<number, Car>(cars.map((car) => [car.id, car]));
-    for (const photo of photos) {
-      if (!result.has(photo.car_id)) {
-        result.set(photo.car_id, {
-          id: photo.car_id,
-          name: photo.cars?.name || "Unknown vehicle",
-          plate: photo.cars?.plate || "No plate",
-        });
-      }
+    for (const id of counts?.byCar.keys() ?? []) {
+      if (!result.has(id)) result.set(id, { id, name: "Unknown vehicle", plate: "No plate" });
     }
     return Array.from(result.values());
-  }, [cars, photos]);
+  }, [cars, counts]);
   const selectedCar = availableCars.find((car) => car.id === selectedCarId) ?? null;
-  const selectedCarGroups = photoGroups.filter((group) => group.carId === selectedCarId);
+  const selectedHistory = history?.carId === selectedCarId ? history : null;
+  const selectedCarGroups = useMemo(() => groupPhotos(selectedHistory?.photos ?? []), [selectedHistory]);
   const start = startOfWeek(currentWeekStart, { weekStartsOn: 1 });
   const visibleDrivers = showAllDrivers ? drivers : drivers.slice(0, 5);
 
@@ -286,7 +296,7 @@ export default function AdminPage() {
       <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
         <StatCard label="Drivers" value={operationalDrivers.length} icon={Users} />
         <StatCard label="Vehicles" value={cars.length} icon={CarFront} />
-        <StatCard label="Photos" value={photos.length} icon={Camera} />
+        <StatCard label="Photos (30 days)" value={counts?.total ?? "—"} icon={Camera} />
       </div>
 
       <section className="rounded-3xl border border-white/8 bg-white/[0.025] p-4 sm:p-5">
@@ -436,6 +446,10 @@ export default function AdminPage() {
             <h2 className="font-semibold text-white">Vehicle photo history</h2>
           </div>
           <p className="mt-1 text-xs text-slate-500">Choose a vehicle to see driver reports from the last 30 days.</p>
+          {countsError && <button type="button" className="mt-2 text-xs text-cyan-300 underline" onClick={() => {
+            setCountsError(false);
+            setCountsAttempt((n) => n + 1);
+          }}>Photo counts unavailable. Retry counts</button>}
         </div>
 
         {availableCars.length === 0 ? (
@@ -446,15 +460,17 @@ export default function AdminPage() {
           <>
             <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-3">
               {availableCars.map((car) => {
-                const reports = photoGroups.filter((group) => group.carId === car.id);
-                const imageCount = reports.reduce((total, group) => total + group.photos.length, 0);
+                const imageCount = counts ? counts.byCar.get(car.id) ?? 0 : "—";
                 const selected = car.id === selectedCarId;
 
                 return (
                   <button
                     type="button"
                     key={car.id}
-                    onClick={() => setSelectedCarId(car.id)}
+                    onClick={() => {
+                      if (selectedCarId !== car.id) setVisibleReports(REPORTS_PER_VIEW);
+                      setSelectedCarId(car.id);
+                    }}
                     className={`min-w-40 rounded-2xl border p-3 text-left transition ${
                       selected
                         ? "border-cyan-300/25 bg-cyan-300/10"
@@ -479,18 +495,28 @@ export default function AdminPage() {
                   <p className="text-xs text-slate-600">{selectedCar?.plate}</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-white/5 px-2.5 py-1 text-[10px] text-slate-500">
-                  {selectedCarGroups.length} reports
+                  {selectedHistory?.photos ? selectedCarGroups.length : "—"} reports
                 </span>
               </div>
 
-              {selectedCarGroups.length === 0 ? (
+              {!selectedHistory ? (
+                <p role="status" className="py-10 text-center text-sm text-slate-400">Loading vehicle reports…</p>
+              ) : selectedHistory.photos === null ? (
+                <div role="alert" className="py-6 text-center text-sm text-slate-400">
+                  Reports could not be loaded.{" "}
+                  <button type="button" className="text-cyan-300 underline" onClick={() => {
+                    setHistory(null);
+                    setHistoryAttempt((n) => n + 1);
+                  }}>Retry reports</button>
+                </div>
+              ) : selectedCarGroups.length === 0 ? (
                 <div className="py-10 text-center">
                   <Camera className="mx-auto mb-2 text-slate-700" size={28} />
                   <p className="text-sm text-slate-500">No photo reports for this vehicle.</p>
                 </div>
               ) : (
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {selectedCarGroups.map((group) => (
+                  {selectedCarGroups.slice(0, visibleReports).map((group) => (
                     <button
                       type="button"
                       key={group.id}
@@ -526,6 +552,11 @@ export default function AdminPage() {
                       <ChevronRight size={16} className="text-slate-700" />
                     </button>
                   ))}
+                  {selectedCarGroups.length > visibleReports && (
+                    <Button type="button" variant="outline" className="sm:col-span-2" onClick={() => setVisibleReports((n) => n + REPORTS_PER_VIEW)}>
+                      Load older reports ({selectedCarGroups.length - visibleReports} remaining)
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
