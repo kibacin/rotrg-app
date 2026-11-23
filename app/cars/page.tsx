@@ -24,6 +24,7 @@ export default function CarsPage() {
   const [photos, setPhotos] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [cameraBusy, setCameraBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -75,7 +76,7 @@ export default function CarsPage() {
   };
 
   const handleSavePhotos = async () => {
-    if (!selectedCar || !userId || photos.length < 6 || photos.length > 8) return;
+    if (!selectedCar || !userId || cameraBusy || photos.length < 6 || photos.length > 8) return;
 
     setUploading(true);
     const uploadedPaths: string[] = [];
@@ -200,7 +201,7 @@ export default function CarsPage() {
 
       {selectedCarDetails && (
         <div
-          className="fixed inset-0 z-[70] flex items-end justify-center bg-black/75 p-3 backdrop-blur-sm sm:items-center"
+          className="fixed inset-0 z-[70] flex items-end justify-center bg-black/85 p-3 sm:items-center"
           onClick={closeUpload}
         >
           <Card
@@ -236,6 +237,7 @@ export default function CarsPage() {
               <CameraCapture
                 files={photos}
                 onChange={setPhotos}
+                onBusyChange={setCameraBusy}
                 disabled={uploading}
                 minimum={6}
                 maximum={8}
@@ -244,7 +246,7 @@ export default function CarsPage() {
               <Button
                 type="button"
                 onClick={handleSavePhotos}
-                disabled={photos.length < 6 || photos.length > 8 || uploading || !userId}
+                disabled={photos.length < 6 || photos.length > 8 || cameraBusy || uploading || !userId}
                 className="mt-5 h-11 w-full rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 font-semibold text-slate-950 hover:from-cyan-300 hover:to-blue-400"
               >
                 {uploading ? (
